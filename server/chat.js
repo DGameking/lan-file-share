@@ -2,10 +2,10 @@
 
 const fs = require('fs');
 const path = require('path');
-const busboy = require('busboy');
 const WebSocket = require('ws');
 
 const { shortId } = require('../shared/utils');
+const { saveMultipartFiles } = require('./recv-util');
 
 const MAX_CHAT_MESSAGES = 1000; // 本地保留的聊天记录条数
 const CHAT_FILES_DIR = 'chat-files';
@@ -61,50 +61,13 @@ class ChatManager {
     });
 
     // 会话文件上传（multipart，支持多文件；文件夹由客户端逐个文件携带相对路径）
-    app.post('/api/chat/upload', (req, res) => {
-      let bb;
+    app.post('/api/chat/upload', async (req, res) => {
       try {
-        bb = busboy({ headers: req.headers, defParamCharset: 'utf8' });
-      } catch (e) {
-        return res.status(400).json({ error: 'bad_request' });
-      }
-      const saved = [];
-      let pending = 0;
-      let closed = false;
-      const done = () => {
-        if (!closed || pending > 0) return;
-        if (!saved.length) return res.status(400).json({ error: 'no_files' });
-        this._pruneFiles();
+        const saved = await saveMultipartFiles(req, this.filesDir, { maxBytes: CHAT_FILES_MAX_BYTES });
         res.json({ ok: true, files: saved });
-      };
-      bb.on('file', (fieldname, file, info) => {
-        const rawName = info.filename || fieldname || 'file';
-        const safeName = path.basename(rawName).replace(/[\\/:*?"<>|]/g, '_') || 'file';
-        const id = shortId() + '_' + safeName;
-        const target = path.join(this.filesDir, id);
-        const out = fs.createWriteStream(target);
-        let size = 0;
-        pending++;
-        file.on('data', (d) => (size += d.length));
-        file.pipe(out);
-        out.on('finish', () => {
-          pending--;
-          saved.push({ fileId: id, name: safeName, size, mime: info.mimeType || 'application/octet-stream' });
-          done();
-        });
-        out.on('error', () => {
-          pending--;
-          done();
-        });
-      });
-      bb.on('close', () => {
-        closed = true;
-        done();
-      });
-      bb.on('error', () => {
-        if (!res.headersSent) res.status(400).json({ error: 'bad_request' });
-      });
-      req.pipe(bb);
+      } catch (e) {
+        if (!res.headersSent) res.status(400).json({ error: e.message || 'bad_request' });
+      }
     });
 
     // 会话文件下载
@@ -272,7 +235,6 @@ class ChatManager {
     return [...this._localMembers(), ...(this.ctx.bridge ? this.ctx.bridge.remoteMemberList() : [])];
   }
 
-  /** 成员变化：本机广播合并列表（本地 + 远端），并把本地列表桥接给对端 */
   _broadcastMembers() {
     this._broadcast('chat.members', this._combinedMembers(), { bridge: false });
     if (this.ctx.bridge) this.ctx.bridge.relay('chat.members', this._localMembers());
@@ -329,28 +291,6 @@ class ChatManager {
   relayMembersTo(ws) {
     try {
       ws.send(JSON.stringify({ type: 'bridge.event', event: 'chat.members', payload: this._localMembers(), origin: this.ctx.deviceId }));
-    } catch (e) {}
-  }
-
-  /** 会话文件缓存超过上限时，按最旧删除 */
-  _pruneFiles() {
-    try {
-      const items = fs
-        .readdirSync(this.filesDir)
-        .map((n) => {
-          const p = path.join(this.filesDir, n);
-          const st = fs.statSync(p);
-          return { p, mtime: st.mtimeMs, size: st.size };
-        })
-        .sort((a, b) => a.mtime - b.mtime);
-      let total = items.reduce((s, i) => s + i.size, 0);
-      for (const it of items) {
-        if (total <= CHAT_FILES_MAX_BYTES) break;
-        try {
-          fs.unlinkSync(it.p);
-          total -= it.size;
-        } catch (e) {}
-      }
     } catch (e) {}
   }
 }

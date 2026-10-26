@@ -18,6 +18,10 @@ const API = {
     ipcRenderer.on('engine:' + event, listener);
     return () => ipcRenderer.removeListener('engine:' + event, listener);
   },
+  // 应用重启（HTTPS 等设置生效）
+  relaunch() {
+    ipcRenderer.send('app:relaunch');
+  },
   // 窗口控制
   minimize() {
     ipcRenderer.send('win:minimize');

@@ -2,25 +2,46 @@
 
 const fs = require('fs');
 const path = require('path');
-const busboy = require('busboy');
 
 const { shortId } = require('../shared/utils');
+const { saveMultipartFiles, pruneDir } = require('./recv-util');
 
 const DROP_FILES_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 接收目录上限 2GB，超出按最旧清理
 
 /**
  * 快速投送（Quick Drop）接收端：
- * 其他设备把文件 POST 到 /api/drop，本机保存到「接收的文件」目录并实时通知。
- * 对应 LocalSend 式的「一拖一放」体验。
+ * - POST /api/drop        multipart 整文件投送（小文件）
+ * - POST /api/drop/chunk  分块上传（大文件断点续传）
+ * - GET  /api/drop/chunk/status?uploadId= 已收分块查询（续传用）
+ * - POST /api/drop/finish 合并分块
+ * - POST /api/drop        JSON {text} 剪贴板文本投送
+ * 文件保存到「接收的文件」目录并实时通知。
  */
 function register(engine) {
   const dir = process.env.LFS_DROP_DIR || path.join(engine.dataDir, 'received');
+  const partsDir = path.join(dir, '.parts');
   try {
     fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(partsDir, { recursive: true });
   } catch (e) {}
   engine.receivedDir = dir;
 
-  engine.app.post('/api/drop', (req, res) => {
+  const cleanId = (v) => String(v || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+
+  const notify = (ip, from, files, extra = {}) => {
+    const payload = { from, files, ts: Date.now(), ...extra };
+    engine.broadcast('drop.incoming', payload);
+    engine.logEvent({
+      event_type: 'file_receive',
+      device_name: from,
+      ip,
+      result: 'success',
+      detail: { count: files.length, size: files.reduce((s, f) => s + (f.size || 0), 0), ...extra },
+    });
+  };
+
+  /* ---------- 整文件 / 剪贴板文本 ---------- */
+  engine.app.post('/api/drop', async (req, res) => {
     if (engine.settings && engine.settings.autoAcceptDrop === false) {
       return res.status(403).json({ error: 'declined' });
     }
@@ -41,9 +62,7 @@ function register(engine) {
           const first = text.trim().split(/\r?\n/)[0].slice(0, 24).replace(/[\\/:*?"<>|]/g, '_') || '剪贴板';
           const id = shortId() + '_' + first + '.txt';
           fs.writeFileSync(path.join(dir, id), text, 'utf8');
-          const payload = { from, files: [{ fileId: id, name: first + '.txt', size: Buffer.byteLength(text), mime: 'text/plain', isText: true }], ts: Date.now() };
-          engine.broadcast('drop.incoming', payload);
-          engine.logEvent({ event_type: 'file_receive', device_name: from, ip: engine.clientIp(req), result: 'success', detail: { count: 1, kind: 'text' } });
+          notify(engine.clientIp(req), from, [{ fileId: id, name: first + '.txt', size: Buffer.byteLength(text), mime: 'text/plain', isText: true }]);
           res.json({ ok: true, received: 1 });
         } catch (e) {
           res.status(400).json({ error: 'bad_request' });
@@ -52,85 +71,97 @@ function register(engine) {
       return;
     }
 
-    let bb;
     try {
-      bb = busboy({ headers: req.headers, defParamCharset: 'utf8' });
+      const saved = await saveMultipartFiles(req, dir, { maxBytes: DROP_FILES_MAX_BYTES });
+      notify(engine.clientIp(req), from, saved);
+      res.json({ ok: true, received: saved.length, totalSize: saved.reduce((s, f) => s + f.size, 0) });
     } catch (e) {
-      return res.status(400).json({ error: 'bad_request' });
+      if (!res.headersSent) res.status(400).json({ error: e.message || 'bad_request' });
     }
-    const saved = [];
-    let pending = 0;
-    let closed = false;
-    let totalSize = 0;
-    const done = () => {
-      if (!closed || pending > 0) return;
-      if (!saved.length) return res.status(400).json({ error: 'no_files' });
-      prune(dir);
-      const payload = { from, files: saved, ts: Date.now() };
-      engine.broadcast('drop.incoming', payload);
-      engine.logEvent({
-        event_type: 'file_receive',
-        device_name: from,
-        ip: engine.clientIp(req),
-        result: 'success',
-        detail: { count: saved.length, size: totalSize },
-      });
-      res.json({ ok: true, received: saved.length, totalSize });
-    };
-    bb.on('file', (fieldname, file, info) => {
-      const rawName = info.filename || fieldname || 'file';
-      const safeName = path.basename(rawName).replace(/[\\/:*?"<>|]/g, '_') || 'file';
-      const id = shortId() + '_' + safeName;
-      const target = path.join(dir, id);
-      const out = fs.createWriteStream(target);
-      let size = 0;
-      pending++;
-      file.on('data', (d) => {
-        size += d.length;
-      });
-      file.pipe(out);
-      out.on('finish', () => {
-        pending--;
-        totalSize += size;
-        saved.push({ fileId: id, name: safeName, size, mime: info.mimeType || 'application/octet-stream' });
-        done();
-      });
-      out.on('error', () => {
-        pending--;
-        done();
-      });
-    });
-    bb.on('close', () => {
-      closed = true;
-      done();
-    });
-    bb.on('error', () => {
-      if (!res.headersSent) res.status(400).json({ error: 'bad_request' });
-    });
-    req.pipe(bb);
   });
-}
 
-/** 接收目录超过上限时按最旧删除 */
-function prune(dir) {
-  try {
-    const items = fs
-      .readdirSync(dir)
-      .map((n) => {
-        const p = path.join(dir, n);
-        const st = fs.statSync(p);
-        return { p, mtime: st.mtimeMs, size: st.size };
-      })
-      .sort((a, b) => a.mtime - b.mtime);
-    let total = items.reduce((s, i) => s + i.size, 0);
-    for (const it of items) {
-      if (total <= DROP_FILES_MAX_BYTES) break;
-      try {
-        fs.unlinkSync(it.p);
-        total -= it.size;
-      } catch (e) {}
+  /* ---------- 分块上传（大文件断点续传） ---------- */
+  engine.app.post('/api/drop/chunk', (req, res) => {
+    if (engine.settings && engine.settings.autoAcceptDrop === false) {
+      return res.status(403).json({ error: 'declined' });
     }
-  } catch (e) {}
+    const uploadId = cleanId(req.query.uploadId);
+    const index = Number.parseInt(req.query.index, 10);
+    if (!uploadId || !(index >= 0) || index > 100000) return res.status(400).json({ error: 'bad_args' });
+    const uDir = path.join(partsDir, uploadId);
+    try {
+      fs.mkdirSync(uDir, { recursive: true });
+    } catch (e) {}
+    const out = fs.createWriteStream(path.join(uDir, `${index}.part`));
+    req.pipe(out);
+    out.on('finish', () => res.json({ ok: true }));
+    out.on('error', () => {
+      if (!res.headersSent) res.status(500).json({ error: 'write_failed' });
+    });
+  });
+
+  engine.app.get('/api/drop/chunk/status', (req, res) => {
+    const uploadId = cleanId(req.query.uploadId);
+    if (!uploadId) return res.status(400).json({ error: 'bad_args' });
+    let received = [];
+    try {
+      received = fs
+        .readdirSync(path.join(partsDir, uploadId))
+        .filter((n) => n.endsWith('.part'))
+        .map((n) => Number.parseInt(n, 10))
+        .filter(Number.isFinite);
+    } catch (e) {}
+    res.json({ ok: true, received });
+  });
+
+  engine.app.post('/api/drop/finish', (req, res) => {
+    const uploadId = cleanId(req.body && req.body.uploadId);
+    const total = Number(req.body && req.body.total);
+    const size = Number(req.body && req.body.size) || 0;
+    const from = String(req.body && req.body.from || engine.clientIp(req)).slice(0, 60) || '未知设备';
+    const rawName = String((req.body && req.body.name) || 'file').slice(0, 200);
+    if (!uploadId || !(total >= 1) || total > 100000) return res.status(400).json({ error: 'bad_args' });
+
+    const uDir = path.join(partsDir, uploadId);
+    let parts = [];
+    try {
+      parts = fs
+        .readdirSync(uDir)
+        .filter((n) => n.endsWith('.part'))
+        .map((n) => Number.parseInt(n, 10))
+        .filter((n) => Number.isFinite(n) && n < total)
+        .sort((a, b) => a - b);
+    } catch (e) {}
+    if (parts.length !== total) {
+      return res.status(409).json({ error: 'incomplete', have: parts.length, total });
+    }
+
+    const safeName = path.basename(rawName).replace(/[\\/:*?"<>|]/g, '_') || 'file';
+    const id = shortId() + '_' + safeName;
+    const target = path.join(dir, id);
+
+    (async () => {
+      const out = fs.createWriteStream(target);
+      for (const i of parts) {
+        await new Promise((resolve, reject) => {
+          const rs = fs.createReadStream(path.join(uDir, `${i}.part`));
+          rs.pipe(out, { end: false });
+          rs.on('end', resolve);
+          rs.on('error', reject);
+        });
+      }
+      await new Promise((r) => out.end(r));
+      const finalSize = fs.existsSync(target) ? fs.statSync(target).size : 0;
+      try {
+        fs.rmSync(uDir, { recursive: true, force: true });
+      } catch (e) {}
+      pruneDir(dir, DROP_FILES_MAX_BYTES);
+      notify(engine.clientIp(req), from, [{ fileId: id, name: safeName, size: finalSize || size, mime: 'application/octet-stream', resumable: true }]);
+      res.json({ ok: true, received: 1 });
+    })().catch(() => {
+      if (!res.headersSent) res.status(500).json({ error: 'assemble_failed' });
+    });
+  });
 }
 
 module.exports = { register };

@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, shell, dialog, Menu, clipboard, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu, clipboard, Notification, globalShortcut } = require('electron');
 const path = require('path');
 const LanFileShare = require('../server');
 const TrayManager = require('./tray');
@@ -137,6 +137,12 @@ function registerIpc() {
     return { ok: true };
   });
 
+  // 应用重启（HTTPS 等设置切换后生效）
+  ipcMain.on('app:relaunch', () => {
+    app.relaunch();
+    app.exit(0);
+  });
+
   // 窗口控制
   ipcMain.on('win:minimize', () => mainWindow && mainWindow.minimize());
   ipcMain.on('win:toggle', () => {
@@ -226,11 +232,26 @@ app.whenReady().then(async () => {
     dialog.showErrorBox('启动失败', String(e && e.message || e));
   }
 
+  /** 显示主窗口并跳转到指定页签 */
+  const showAt = (tab) => {
+    if (mainWindow) {
+      mainWindow.show();
+      mainWindow.focus();
+      if (tab) mainWindow.webContents.send('engine:nav', tab);
+    }
+  };
+
+  // 全局快捷键：快速投送（注：Windows 系统限制，托盘图标本身无法接收文件拖放）
+  try {
+    globalShortcut.register('Alt+Shift+D', () => showAt('drop'));
+  } catch (e) {}
+
   tray = new TrayManager({
-    onShow: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } },
+    onShow: () => showAt(null),
     onHide: () => mainWindow && mainWindow.hide(),
     onQuit: () => { willQuit = true; app.quit(); },
-    onOpenHome: () => engine && shell.openExternal(`http://${engine.localIp}:${engine.httpPort}`),
+    onOpenHome: () => engine && shell.openExternal(`http${engine.useHttps ? 's' : ''}://${engine.localIp}:${engine.httpPort}`),
+    onQuickDrop: () => showAt('drop'),
   });
   tray.create();
 
@@ -245,6 +266,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('before-quit', async (e) => {
+  try { globalShortcut.unregisterAll(); } catch (_) {}
   if (engine) {
     e.preventDefault();
     willQuit = true;

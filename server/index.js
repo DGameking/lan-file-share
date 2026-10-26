@@ -139,8 +139,11 @@ class LanFileShare extends require('events').EventEmitter {
         defaultEncrypt: false,
         clipboardSync: true,
         autoAcceptDrop: true,
+        https: false,
       };
     this.deviceName = this.settings.deviceName || this.deviceName;
+    // HTTPS 模式由设置控制（自签证书，重启生效）；屏幕共享 / PWA 需要安全上下文
+    this.useHttps = !!this.settings.https;
 
     // 恢复共享与设备
     for (const r of this.db.listShares()) this.shares.set(r.id, r);
@@ -208,6 +211,16 @@ class LanFileShare extends require('events').EventEmitter {
     });
 
     app.get('/', (req, res) => res.type('html').send(this._rootPageHtml()));
+
+    // PWA：manifest / Service Worker / 图标（安全上下文下浏览器可“安装到主屏幕”）
+    const staticDir = path.join(__dirname, 'static');
+    app.get('/manifest.webmanifest', (req, res) => res.type('application/manifest+json').sendFile(path.join(staticDir, 'manifest.webmanifest')));
+    app.get('/sw.js', (req, res) => res.type('application/javascript').sendFile(path.join(staticDir, 'sw.js')));
+    app.get('/icons/:name', (req, res) => {
+      const name = path.basename(req.params.name || '');
+      if (!/^icon-\d+\.png$/.test(name)) return res.status(404).end();
+      res.sendFile(path.join(staticDir, 'icons', name));
+    });
 
     // 管理端（/admin 页面 + /api 管理路由鉴权）—— 必须先于 registerApi 挂载
     require('./admin').register(this);
@@ -543,6 +556,11 @@ class LanFileShare extends require('events').EventEmitter {
       this.udp.stopHeartbeat();
       this.udp.startHeartbeat();
     }
+    if (!!patch.https !== !!before.https) {
+      // HTTPS 切换需重启服务生效
+      this.broadcast('settings', this.getSettings());
+      this.emit('https-changed', !!patch.https);
+    }
     this.broadcast('settings', this.getSettings());
   }
 
@@ -636,6 +654,7 @@ class LanFileShare extends require('events').EventEmitter {
       })
       .join('');
     return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+      <meta name="theme-color" content="#4f8cff"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icons/icon-192.png">
       <title>局域网文件共享</title><style>
       :root{--bg:#0f1115;--panel:#1a1d24;--line:#2a2e38;--text:#e6e8ec;--muted:#9aa0aa;--accent:#4f8cff}
       *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
@@ -658,7 +677,7 @@ class LanFileShare extends require('events').EventEmitter {
       </div>
       <h3>共享文件夹</h3>
       ${shares || '<div class="empty">暂无共享 — 请在桌面客户端或管理控制台添加</div>'}
-      </div></body></html>`;
+      </div><script>if('serviceWorker' in navigator && window.isSecureContext){navigator.serviceWorker.register('/sw.js').catch(function(){});}</script></body></html>`;
   }
 
   async stop() {

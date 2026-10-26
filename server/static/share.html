@@ -47,6 +47,9 @@
       .toast.show { opacity: 1; }
       .muted { color: var(--muted); font-size: 13px; }
     </style>
+    <meta name="theme-color" content="#4f8cff" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/icon-192.png" />
   </head>
   <body>
     <header>
@@ -182,5 +185,10 @@
 
       load();
     </script>
+  <script>
+    if ('serviceWorker' in navigator && window.isSecureContext) {
+      navigator.serviceWorker.register('/sw.js').catch(function(){});
+    }
+  </script>
   </body>
 </html>

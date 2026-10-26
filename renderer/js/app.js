@@ -346,7 +346,15 @@
         save({ [key]: e.target.checked });
       }
       const fps = computed(() => store.self.fingerprint || '-');
-      return { store, save, onText, onCheck, fps, copy };
+      const httpsChanged = ref(false);
+      async function onHttps(e) {
+        await save({ https: e.target.checked });
+        httpsChanged.value = true;
+      }
+      function relaunch() {
+        if (window.lan && window.lan.relaunch) window.lan.relaunch();
+      }
+      return { store, save, onText, onCheck, fps, copy, onHttps, httpsChanged, relaunch };
     },
     template: `
       <div>
@@ -390,6 +398,15 @@
             <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.startup" @change="onCheck($event,'startup')" /> 开机自启动</label>
             <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.minimizeToTray" @change="onCheck($event,'minimizeToTray')" /> 关闭时最小化到托盘</label>
           </div>
+        </div>
+
+        <div class="card">
+          <h3>传输与安全</h3>
+          <div class="row">
+            <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.https" @change="onHttps($event)" /> HTTPS 加密传输（自签证书，重启生效）</label>
+            <button class="btn sm ghost" @click="relaunch" v-if="httpsChanged">🔄 立即重启生效</button>
+          </div>
+          <div class="muted" style="margin-top:8px">开启后：屏幕共享与“添加到主屏幕（PWA）”可用，传输全程加密；手机首次访问需在浏览器中信任证书警告</div>
         </div>
 
         <div class="card">
@@ -488,19 +505,79 @@
           const t = reactive({ key: ++seq, name: f.name, size: f.size, pct: 0, to: d.device_name, status: 'uploading' });
           transfers.value.unshift(t);
           if (transfers.value.length > 30) transfers.value.pop();
-          const xhr = new XMLHttpRequest();
-          const fd = new FormData();
-          fd.append('file', f, f.name);
-          xhr.open('POST', `http://${d.host}:${d.port}/api/drop?from=${encodeURIComponent(store.self.deviceName || '')}`);
-          xhr.upload.onprogress = (e) => {
-            if (e.lengthComputable) t.pct = Math.round((e.loaded / e.total) * 100);
-          };
-          xhr.onload = () => {
-            if (xhr.status === 200) { t.status = 'done'; t.pct = 100; toast(`已投送给「${d.device_name}」：${f.name}`, 'ok'); }
-            else t.status = 'error';
-          };
-          xhr.onerror = () => { t.status = 'error'; toast(`投送失败：${f.name}`, 'warn'); };
-          xhr.send(fd);
+          uploadOne(d, f, t);
+        }
+      }
+
+      // 单文件上传：小文件直传；大文件（>16MB）自动分块（8MB/块），失败重试、支持断点续传
+      const CHUNK_THRESHOLD = 16 * 1024 * 1024;
+      const CHUNK_SIZE = 8 * 1024 * 1024;
+      const base = (d) => `http://${d.host}:${d.port}`;
+
+      function stableUploadId(d, f) {
+        const s = `${d.device_id}|${f.name}|${f.size}|${f.lastModified || ''}`;
+        let h = 5381;
+        for (let i = 0; i < s.length; i++) h = (((h << 5) + h + s.charCodeAt(i)) >>> 0);
+        return 'u' + h.toString(36) + s.length.toString(36);
+      }
+
+      async function uploadOne(d, f, t) {
+        try {
+          if (f.size <= CHUNK_THRESHOLD) {
+            await new Promise((resolve, reject) => {
+              const xhr = new XMLHttpRequest();
+              const fd = new FormData();
+              fd.append('file', f, f.name);
+              xhr.open('POST', `${base(d)}/api/drop?from=${encodeURIComponent(store.self.deviceName || '')}`);
+              xhr.upload.onprogress = (e) => { if (e.lengthComputable) t.pct = Math.round((e.loaded / e.total) * 100); };
+              xhr.onload = () => (xhr.status === 200 ? resolve() : reject(new Error('HTTP ' + xhr.status)));
+              xhr.onerror = () => reject(new Error('network'));
+              xhr.send(fd);
+            });
+            t.status = 'done'; t.pct = 100;
+            toast(`已投送给「${d.device_name}」：${f.name}`, 'ok');
+            return;
+          }
+
+          // 分块续传
+          const uploadId = stableUploadId(d, f);
+          const total = Math.ceil(f.size / CHUNK_SIZE);
+          let have = new Set();
+          try {
+            const st = await (await fetch(`${base(d)}/api/drop/chunk/status?uploadId=${uploadId}`)).json();
+            if (st.ok) have = new Set(st.received || []);
+          } catch (e) {}
+          for (let i = 0; i < total; i++) {
+            if (have.has(i)) { t.pct = Math.round(((i + 1) / total) * 100); continue; }
+            let ok = false, lastErr = null;
+            for (let retry = 0; retry < 3 && !ok; retry++) {
+              try {
+                const start = i * CHUNK_SIZE;
+                const blob = f.slice(start, Math.min(start + CHUNK_SIZE, f.size));
+                const res = await fetch(`${base(d)}/api/drop/chunk?uploadId=${uploadId}&index=${i}`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/octet-stream' },
+                  body: blob,
+                });
+                ok = res.ok;
+                if (!ok) lastErr = new Error('HTTP ' + res.status);
+              } catch (e) { lastErr = e; }
+              if (!ok) await new Promise((r) => setTimeout(r, 800 * (retry + 1)));
+            }
+            if (!ok) throw lastErr || new Error('chunk_failed');
+            t.pct = Math.round(((i + 1) / total) * 100);
+          }
+          const fin = await fetch(`${base(d)}/api/drop/finish?from=${encodeURIComponent(store.self.deviceName || '')}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uploadId, name: f.name, total, size: f.size, from: store.self.deviceName || '' }),
+          });
+          if (!fin.ok) throw new Error('finish HTTP ' + fin.status);
+          t.status = 'done'; t.pct = 100;
+          toast(`已投送给「${d.device_name}」：${f.name}`, 'ok');
+        } catch (e) {
+          t.status = 'error';
+          toast(`投送失败：${f.name}（${e.message || '网络错误'}）`, 'warn');
         }
       }
 
@@ -619,6 +696,7 @@
 
       onMounted(() => {
         refresh();
+        api.on('nav', (t) => { if (t) tab.value = t; }); // 托盘/全局快捷键跳转
         api.on('devices', (list) => (store.devices = list));
         api.on('shares', (list) => (store.shares = list));
         api.on('settings', (s) => (store.settings = s));

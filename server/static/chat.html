@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#2563eb" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="icon" href="/icons/icon-192.png" />
 <title>局域网会话</title>
 <style>
 :root{
@@ -109,6 +112,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
         <div class="sub" id="subInfo">连接中…</div>
       </div>
       <span class="sp"></span>
+      <button class="btn ghost" id="btnScreen" style="display:none">🖥 屏幕共享</button>
       <button class="btn ghost" id="btnAudio">🎙 语音通话</button>
       <button class="btn ghost" id="btnVideo">📹 视频通话</button>
       <button class="btn danger" id="btnHangup" style="display:none">挂断</button>
@@ -428,18 +432,32 @@ var rtc={
     // 跨设备（@前缀）成员暂不支持通话，仅本机服务内的成员可发起
     var others=members.filter(function(m){return m.id!==selfId && m.id.indexOf('@')===-1;});
     if(!others.length){ alert('当前没有其他在线成员（跨设备通话将在后续版本支持）'); return; }
+    if(media==='screen' && !(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)){
+      alert('当前浏览器不支持屏幕共享（需要 HTTPS 或较新浏览器）'); return;
+    }
     var self=this;
-    navigator.mediaDevices.getUserMedia({audio:true, video: media==='video' ? {width:{ideal:1280}} : false}).then(function(stream){
+    var getMedia;
+    if(media==='screen'){
+      getMedia=navigator.mediaDevices.getDisplayMedia({video:{frameRate:30}, audio:false});
+    } else {
+      getMedia=navigator.mediaDevices.getUserMedia({audio:true, video: media==='video' ? {width:{ideal:1280}} : false});
+    }
+    getMedia.then(function(stream){
       self.inCall=true; self.media=media; self.localStream=stream;
       $('videos').classList.add('on');
-      addVideoTile(selfId, myName+'（我）', stream, media==='video');
+      addVideoTile(selfId, myName+'（我'+(media==='screen'?'的屏幕':'')+'）', stream, true);
       self.startAt=Date.now();
       $('callbar').style.display='flex';
-      showCallbar('通话中', false, true);
+      showCallbar(media==='screen'?'屏幕共享中':'通话中', false, true);
       self.clockTimer=setInterval(function(){
         var s=Math.floor((Date.now()-self.startAt)/1000);
         $('clock').textContent=String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
       },1000);
+      // 屏幕共享：点停止共享即挂断
+      if(media==='screen'){
+        var vt=stream.getVideoTracks()[0];
+        if(vt) vt.onended=function(){ self.leave(); };
+      }
       others.forEach(function(m){
         var pc=new RTCPeerConnection({iceServers:[]}); // 纯局域网，无需 STUN
         self.pcs[m.id]=pc;
@@ -450,8 +468,8 @@ var rtc={
           send({type:'rtc.signal',to:m.id,data:{kind:'invite',media:media}});
         }).catch(function(){});
       });
-      appendSys('已发起'+(media==='video'?'视频':'语音')+'通话（'+others.length+' 人）');
-    }).catch(function(e){ alert('无法获取麦克风/摄像头：'+e.message); });
+      appendSys('已发起'+(media==='screen'?'屏幕共享':media==='video'?'视频':'语音')+'通话（'+others.length+' 人）');
+    }).catch(function(e){ alert(media==='screen'?'无法获取屏幕（需 HTTPS / 用户授权）：'+e.message:'无法获取麦克风/摄像头：'+e.message); });
   },
   setupPc:function(pc,toId){
     var self=this;
@@ -464,23 +482,28 @@ var rtc={
   accept:function(){
     if(!this.pendingInvite) return;
     var self=this, inv=this.pendingInvite; this.pendingInvite=null;
-    navigator.mediaDevices.getUserMedia({audio:true, video: inv.media==='video' ? {width:{ideal:1280}} : false}).then(function(stream){
+    var setup=function(stream){
       self.inCall=true; self.media=inv.media; self.localStream=stream;
       $('videos').classList.add('on');
-      addVideoTile(selfId, myName+'（我）', stream, inv.media==='video');
+      if(stream) addVideoTile(selfId, myName+'（我）', stream, inv.media==='video');
       self.startAt=Date.now();
-      showCallbar('通话中', false, true);
+      showCallbar(inv.media==='screen'?'正在观看屏幕共享':'通话中', false, true);
       self.clockTimer=setInterval(function(){
         var s=Math.floor((Date.now()-self.startAt)/1000);
         $('clock').textContent=String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
       },1000);
       var pc=new RTCPeerConnection({iceServers:[]});
       self.pcs[inv.from]=pc;
-      stream.getTracks().forEach(function(t){ pc.addTrack(t,stream); });
-      pc.ontrack=function(e){ addVideoTile(inv.from, self.nameOf(inv.from), e.streams[0], inv.media==='video'); };
+      if(stream) stream.getTracks().forEach(function(t){ pc.addTrack(t,stream); });
+      pc.ontrack=function(e){ addVideoTile(inv.from, self.nameOf(inv.from), e.streams[0], inv.media!=='audio'); };
       send({type:'rtc.signal',to:inv.from,data:{kind:'accept'}});
-      appendSys('已加入通话');
-    }).catch(function(e){ alert('无法获取麦克风/摄像头：'+e.message); self.decline(); });
+      appendSys(inv.media==='screen'?'正在观看对方的屏幕':'已加入通话');
+    };
+    if(inv.media==='screen'){
+      setup(null); // 只观看，不需要本机媒体
+    } else {
+      navigator.mediaDevices.getUserMedia({audio:true, video: inv.media==='video' ? {width:{ideal:1280}} : false}).then(setup).catch(function(e){ alert('无法获取麦克风/摄像头：'+e.message); self.decline(); });
+    }
   },
   decline:function(){
     if(!this.pendingInvite) return;
@@ -541,6 +564,11 @@ function addVideoTile(id, name, stream, video){
 }
 $('btnAudio').onclick=function(){ rtc.start('audio'); };
 $('btnVideo').onclick=function(){ rtc.start('video'); };
+$('btnScreen').onclick=function(){ rtc.start('screen'); };
+// 屏幕共享仅安全上下文（HTTPS / localhost）可用
+if(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia){
+  $('btnScreen').style.display='';
+}
 $('btnHangup').onclick=function(){ rtc.leave(); };
 $('btnLeave').onclick=function(){ rtc.leave(); };
 $('btnMute').onclick=function(){
@@ -549,6 +577,11 @@ $('btnMute').onclick=function(){
   if(track){ track.enabled=!track.enabled; this.textContent=track.enabled?'🎤 麦克风':'🔇 已静音'; }
 };
 document.addEventListener('click',function(){ if(Notification && Notification.permission==='default') Notification.requestPermission(); },{once:true});
+
+// PWA：安全上下文下注册 Service Worker（可“安装到主屏幕”、离线打开外壳）
+if('serviceWorker' in navigator && window.isSecureContext){
+  navigator.serviceWorker.register('/sw.js').catch(function(){});
+}
 
 connect();
 renderMembers();
