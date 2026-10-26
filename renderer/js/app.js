@@ -139,10 +139,18 @@
       const qr = ref(null);
       const qrName = ref('');
 
-      // 其他设备的共享（桥接联邦自动同步）
+      // 其他设备的共享（桥接联邦自动同步 + 打开页面时主动拉快照/补拉）
       const remoteShares = ref([]); // [{deviceName, deviceId, shares:[{id,name,permission,hasPassword}]}]
-      onMounted(() => {
+      onMounted(async () => {
         api.on('remote.shares', (list) => (remoteShares.value = Array.isArray(list) ? list : []));
+        try {
+          const snap = await api.invoke('engine:remoteSharesSnapshot');
+          if (snap.ok && Array.isArray(snap.data) && snap.data.length) remoteShares.value = snap.data;
+          else {
+            // 快照为空：向所有在线对端补拉一次目录（对端稍后经 remote.shares 事件回填）
+            api.invoke('engine:refreshRemoteShares');
+          }
+        } catch (e) {}
       });
       function devUrl(deviceId) {
         const d = store.devices.find((x) => x.device_id === deviceId);

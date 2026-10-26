@@ -66,6 +66,11 @@ class ChatManager {
       res.json({ members: this._combinedMembers() });
     });
 
+    // 会话页身份接口（免鉴权：/chat 面向所有局域网设备；客户端凭此把窗口归到设备成员）
+    app.get('/api/chat/whoami', (req, res) => {
+      res.json({ deviceId: this.ctx.deviceId, deviceName: this.ctx.deviceName });
+    });
+
     // 会话页二维码（供管理端展示，手机扫码直达 /chat）
     app.get('/api/chat/qrcode', async (req, res) => {
       try {
@@ -317,9 +322,22 @@ class ChatManager {
   }
 
   _localMembers() {
-    const list = [...this.members.values()].map((m) => ({ id: m.id, name: m.name, kind: m.kind, deviceId: m.deviceId }));
-    if (this.deviceMember && !list.some((m) => m.id === this.deviceMember.id)) list.unshift(this.deviceMember);
-    return list;
+    // 设备唯一聚合：同一 deviceId 的多个窗口（设备/桌面/浏览器）只显示一个成员。
+    // 优先级：device（引擎常驻，设备名）> desktop（桌面内嵌页）> web（浏览器窗口）
+    const rank = { device: 0, desktop: 1, web: 2 };
+    const buckets = new Map(); // deviceId -> 成员
+    const loose = []; // 无 deviceId 的旧客户端窗口
+    if (this.deviceMember) buckets.set(this.deviceMember.deviceId, { ...this.deviceMember });
+    for (const m of this.members.values()) {
+      const entry = { id: m.id, name: m.name, kind: m.kind, deviceId: m.deviceId };
+      if (m.deviceId) {
+        const cur = buckets.get(m.deviceId);
+        if (!cur || (rank[m.kind] ?? 2) < (rank[cur.kind] ?? 2)) buckets.set(m.deviceId, entry);
+      } else {
+        loose.push(entry);
+      }
+    }
+    return [...buckets.values(), ...loose];
   }
 
   _combinedMembers() {

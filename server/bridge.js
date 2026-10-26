@@ -104,9 +104,10 @@ class BridgeManager {
         host: this.engine.localIp,
         port: this.engine.httpPort,
       });
-      // 把本机当前成员列表与共享目录同步给对方
+      // 把本机当前成员列表与共享目录同步给对方，并请求对方的目录（补拉）
       if (this.engine.chat) this.engine.chat.relayMembersTo(ws);
       this.relaySharesTo(ws);
+      this._send(ws, { type: 'shares.request' });
     });
     ws.on('message', (raw) => {
       try {
@@ -174,8 +175,16 @@ class BridgeManager {
           this._pushRemoteShares();
         }
       });
-      // 同步本机成员与共享目录给对方
+      // 同步本机成员与共享目录给对方，并请求对方的目录（补拉）
       if (this.engine.chat) this.engine.chat.relayMembersTo(ws);
+      this.relaySharesTo(ws);
+      this._send(ws, { type: 'shares.request' });
+      return true;
+    }
+
+    // 对端请求本机共享目录（握手补拉；旧版本对端不认识此消息，忽略即无害）
+    if (msg.type === 'shares.request') {
+      if (this.engine.logger) this.engine.logger.info('bridge', '对端请求共享目录，回送 catalog');
       this.relaySharesTo(ws);
       return true;
     }
@@ -227,18 +236,26 @@ class BridgeManager {
   setRemoteMembers(origin, list) {
     if (!Array.isArray(list)) return;
     const tag = String(origin).slice(0, 8);
-    this.remoteMembers.set(
-      origin,
-      list
-        .filter((m) => m && m.id)
-        .map((m) => ({
-          id: `${m.id}@${tag}`,
-          name: String(m.name || '未知设备').slice(0, 40),
-          kind: m.kind === 'desktop' ? 'desktop' : (m.kind === 'device' ? 'device' : 'web'),
-          deviceId: m.deviceId || null,
-          remote: true,
-        }))
-    );
+    // 设备唯一聚合：同一 deviceId 的多个窗口只保留优先级最高的一个成员
+    const rank = { device: 0, desktop: 1, web: 2 };
+    const buckets = new Map();
+    const loose = [];
+    for (const m of list.filter((m) => m && m.id)) {
+      const entry = {
+        id: `${m.id}@${tag}`,
+        name: String(m.name || '未知设备').slice(0, 40),
+        kind: m.kind === 'desktop' ? 'desktop' : (m.kind === 'device' ? 'device' : 'web'),
+        deviceId: m.deviceId || null,
+        remote: true,
+      };
+      if (entry.deviceId) {
+        const cur = buckets.get(entry.deviceId);
+        if (!cur || (rank[entry.kind] ?? 2) < (rank[cur.kind] ?? 2)) buckets.set(entry.deviceId, entry);
+      } else {
+        loose.push(entry);
+      }
+    }
+    this.remoteMembers.set(origin, [...buckets.values(), ...loose]);
     this._refreshLocalMembers();
   }
 
@@ -254,6 +271,15 @@ class BridgeManager {
   relaySharesTo(ws) {
     if (!this.engine.shareCatalog) return;
     this._send(ws, { type: 'bridge.event', event: 'shares.catalog', payload: this.engine.shareCatalog(), origin: this.engine.deviceId });
+  }
+
+  /** 向所有已连接的对端请求共享目录（页面打开/快照为空时的主动补拉） */
+  requestSharesAll() {
+    const msg = { type: 'shares.request' };
+    let n = 0;
+    for (const ws of this.outbound.values()) { this._send(ws, msg); n++; }
+    for (const ws of this.inbound.keys()) { this._send(ws, msg); n++; }
+    return n;
   }
 
   /** 收到对端共享目录：存表并通知本机客户端 */

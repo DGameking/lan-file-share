@@ -215,36 +215,47 @@ function connect(){
   ws.onerror = function(){ try{ws.close();}catch(e){} };
 }
 function send(o){ if(ws && ws.readyState===1) ws.send(JSON.stringify(o)); }
-function hello(){ send({type:'chat.hello', clientId:myId, name:myName, kind: isDesktop ? 'desktop' : 'web'}); }
+// 本机设备 ID：把窗口归到设备成员（服务端按 deviceId 聚合，一台设备只显示一个成员）
+var myDeviceId = '';
+fetch('/api/chat/whoami').then(function(r){ return r.json(); }).then(function(d){
+  if(d && d.deviceId){ myDeviceId = d.deviceId; hello(); }
+}).catch(function(){});
+function hello(){ send({type:'chat.hello', clientId:myId, name:myName, kind: isDesktop ? 'desktop' : 'web', deviceId: myDeviceId || undefined}); }
 
 /* ---------- 成员 ---------- */
 var membersSeen = false; // 首次列表到达前不做入离场提示
 var prevMembers = [];    // 上一次展示的成员列表（用于入离场对比）
 function memberLabel(k){ return k==='desktop' ? '桌面客户端' : (k==='device' ? '设备' : '浏览器 / 移动端'); }
+function memberKey(m){ return m.deviceId || m.id; } // 设备唯一聚合键
 function renderMembers(){
   var seen={}; var list=[];
-  members.forEach(function(m){ if(!seen[m.id]){seen[m.id]=1; list.push(m);} });
-  if(!seen[selfId]) list.push({id:selfId,name:myName+'（我）',kind:isDesktop?'desktop':'web'});
-  // 入离场系统提示：与上一次列表对比
+  members.forEach(function(m){
+    var k = memberKey(m);
+    if(!seen[k]){seen[k]=1; list.push(m);}
+  });
+  var myDevMember = myDeviceId && list.some(function(m){ return m.deviceId===myDeviceId; });
+  if(!myDevMember && !seen[selfId]) list.push({id:selfId, deviceId:myDeviceId||null, name:myName+'（我）', kind:isDesktop?'desktop':'web'});
+  // 入离场系统提示：与上一次列表按设备键对比（同设备重复加入不刷屏）
   if(membersSeen){
-    var prev={}; prevMembers.forEach(function(m){ prev[m.id]=m; });
-    var now={}; list.forEach(function(m){ now[m.id]=m; });
-    Object.keys(now).forEach(function(id){
-      if(id===selfId || prev[id]) return;
-      appendSys('👋 ' + now[id].name + ' 加入了会话');
+    var prev={}; prevMembers.forEach(function(m){ prev[memberKey(m)]=m; });
+    var now={}; list.forEach(function(m){ now[memberKey(m)]=m; });
+    Object.keys(now).forEach(function(k){
+      if((myDeviceId && now[k].deviceId===myDeviceId) || prev[k]) return;
+      appendSys('👋 ' + now[k].name + ' 加入了会话');
     });
-    Object.keys(prev).forEach(function(id){
-      if(id===selfId || now[id]) return;
-      appendSys('🚪 ' + prev[id].name + ' 离开了会话');
+    Object.keys(prev).forEach(function(k){
+      if((myDeviceId && prev[k].deviceId===myDeviceId) || now[k]) return;
+      appendSys('🚪 ' + prev[k].name + ' 离开了会话');
     });
   }
   membersSeen = true;
   prevMembers = list;
   $('mCount').textContent=list.length;
   membersEl.innerHTML = list.map(function(m){
+    var mine = (m.id===selfId) || (myDeviceId && m.deviceId===myDeviceId);
     var initial = (m.name||'?').slice(0,1).toUpperCase();
-    return '<div class="member"><div class="avatar'+(m.id===selfId?' me':'')+'">'+initial+'</div>'+
-      '<div class="m-info"><div class="m-name">'+esc(m.name)+(m.id===selfId?'（我）':'')+(m.kind==='device'?' <span style="font-size:10px;color:#3b82f6">设备</span>':'')+'</div>'+
+    return '<div class="member"><div class="avatar'+(mine?' me':'')+'">'+initial+'</div>'+
+      '<div class="m-info"><div class="m-name">'+esc(m.name)+(mine?'（我）':'')+(m.kind==='device'?' <span style="font-size:10px;color:#3b82f6">设备</span>':'')+'</div>'+
       '<div class="m-kind">'+memberLabel(m.kind)+'</div></div></div>';
   }).join('');
 }

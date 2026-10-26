@@ -119,6 +119,8 @@ function registerIpc() {
   h('engine:trustDevice', (id, trusted) => engine.trustDevice(id, !!trusted));
   h('engine:blacklistDevice', (id, black) => engine.blacklistDevice(id, !!black));
   h('engine:pingDevice', (id) => engine.pingDevice(id));
+  h('engine:remoteSharesSnapshot', () => (engine.bridge ? engine.bridge.remoteShareList() : []));
+  h('engine:refreshRemoteShares', () => ({ requested: engine.bridge ? engine.bridge.requestSharesAll() : 0 }));
   h('engine:connectManual', (opts) => engine.connectManual(opts || {}));
   h('engine:discover', () => engine.discover());
 
