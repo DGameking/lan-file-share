@@ -2,7 +2,7 @@
 # 局域网文件共享 — 启动 / 停止 / 状态
 set -u
 
-APP_NAME="${TRIM_APPNAME:-LanFileShare}"
+APP_NAME="${TRIM_APPNAME:-lanfileshare}"
 APP_DIR="${TRIM_APPDEST:-/var/apps/${APP_NAME}}"
 PID_FILE="${TRIM_PKGVAR}/app.pid"
 LOG_FILE="${TRIM_PKGVAR}/info.log"

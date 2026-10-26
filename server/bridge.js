@@ -224,7 +224,7 @@ class BridgeManager {
         .map((m) => ({
           id: `${m.id}@${tag}`,
           name: String(m.name || '未知设备').slice(0, 40),
-          kind: m.kind === 'desktop' ? 'desktop' : 'web',
+          kind: m.kind === 'desktop' ? 'desktop' : (m.kind === 'device' ? 'device' : 'web'),
           deviceId: m.deviceId || null,
           remote: true,
         }))

@@ -159,16 +159,24 @@ var $ = function(id){ return document.getElementById(id); };
 var msgsEl=$('msgs'), inputEl=$('input'), membersEl=$('members');
 
 /* ---------- 身份 ---------- */
-var myId = localStorage.getItem('chat_id') || (function(){ var id='u'+Math.random().toString(36).slice(2,10); localStorage.setItem('chat_id',id); return id; })();
-var myName = localStorage.getItem('chat_name') || '';
+/* 桌面客户端内嵌页通过 ?kind=desktop&name=设备名 入会：使用独立身份存储，
+   且名称跟随 URL 参数（设备改名后自动同步），与浏览器打开的会话页互不覆盖 */
+var qs = new URLSearchParams(location.search);
+var isDesktop = qs.get('kind') === 'desktop';
+var idKey = isDesktop ? 'chat_id_desktop' : 'chat_id';
+var nameKey = isDesktop ? 'chat_name_desktop' : 'chat_name';
+var urlName = (qs.get('name') || '').trim();
+var myId = localStorage.getItem(idKey) || (function(){ var id='u'+Math.random().toString(36).slice(2,10); localStorage.setItem(idKey,id); return id; })();
+var myName = urlName || localStorage.getItem(nameKey) || '';
 if(!myName){
   myName = '设备' + Math.floor(Math.random()*900+100);
-  localStorage.setItem('chat_name', myName);
+  localStorage.setItem(nameKey, myName);
 }
+if(urlName) localStorage.setItem(nameKey, myName);
 $('nameInput').value = myName;
 $('nameInput').addEventListener('change', function(){
   myName = this.value.trim() || myName;
-  localStorage.setItem('chat_name', myName);
+  localStorage.setItem(nameKey, myName);
   hello();
 });
 
@@ -203,23 +211,41 @@ function connect(){
     }
     if(m.event==='rtc.signal'){ rtc.onSignal(m.payload); return; }
   };
-  ws.onclose = function(){ $('subInfo').textContent='连接断开，3 秒后重连…'; setTimeout(connect,3000); };
+  ws.onclose = function(){ $('subInfo').textContent='连接断开，3 秒后重连…'; members=[]; prevMembers=[]; membersSeen=false; setTimeout(connect,3000); };
   ws.onerror = function(){ try{ws.close();}catch(e){} };
 }
 function send(o){ if(ws && ws.readyState===1) ws.send(JSON.stringify(o)); }
-function hello(){ send({type:'chat.hello', clientId:myId, name:myName, kind: 'desktop'===localStorage.getItem('chat_kind')?'desktop':'web'}); }
+function hello(){ send({type:'chat.hello', clientId:myId, name:myName, kind: isDesktop ? 'desktop' : 'web'}); }
 
 /* ---------- 成员 ---------- */
+var membersSeen = false; // 首次列表到达前不做入离场提示
+var prevMembers = [];    // 上一次展示的成员列表（用于入离场对比）
+function memberLabel(k){ return k==='desktop' ? '桌面客户端' : (k==='device' ? '设备' : '浏览器 / 移动端'); }
 function renderMembers(){
   var seen={}; var list=[];
   members.forEach(function(m){ if(!seen[m.id]){seen[m.id]=1; list.push(m);} });
-  if(!seen[selfId]) list.push({id:selfId,name:myName+'（我）',kind:'web'});
+  if(!seen[selfId]) list.push({id:selfId,name:myName+'（我）',kind:isDesktop?'desktop':'web'});
+  // 入离场系统提示：与上一次列表对比
+  if(membersSeen){
+    var prev={}; prevMembers.forEach(function(m){ prev[m.id]=m; });
+    var now={}; list.forEach(function(m){ now[m.id]=m; });
+    Object.keys(now).forEach(function(id){
+      if(id===selfId || prev[id]) return;
+      appendSys('👋 ' + now[id].name + ' 加入了会话');
+    });
+    Object.keys(prev).forEach(function(id){
+      if(id===selfId || now[id]) return;
+      appendSys('🚪 ' + prev[id].name + ' 离开了会话');
+    });
+  }
+  membersSeen = true;
+  prevMembers = list;
   $('mCount').textContent=list.length;
   membersEl.innerHTML = list.map(function(m){
     var initial = (m.name||'?').slice(0,1).toUpperCase();
     return '<div class="member"><div class="avatar'+(m.id===selfId?' me':'')+'">'+initial+'</div>'+
-      '<div class="m-info"><div class="m-name">'+esc(m.name)+(m.id===selfId?'（我）':'')+'</div>'+
-      '<div class="m-kind">'+(m.kind==='desktop'?'桌面客户端':'浏览器 / 移动端')+'</div></div></div>';
+      '<div class="m-info"><div class="m-name">'+esc(m.name)+(m.id===selfId?'（我）':'')+(m.kind==='device'?' <span style="font-size:10px;color:#3b82f6">设备</span>':'')+'</div>'+
+      '<div class="m-kind">'+memberLabel(m.kind)+'</div></div></div>';
   }).join('');
 }
 
@@ -244,6 +270,13 @@ function renderAll(){
   scrollBottom(true);
 }
 function addDay(d){ var el=document.createElement('div'); el.className='day'; el.textContent=d; msgsEl.appendChild(el); }
+/* 系统提示（成员入离场 / 剪贴板同步 / 通话状态等） */
+function appendSys(text){
+  var el=document.createElement('div');
+  el.className='sysmsg'; el.textContent=text;
+  msgsEl.appendChild(el);
+  scrollBottom();
+}
 
 function fileHtml(f){
   // 远端文件走本机同源代理（/api/chat/remote），规避跨源下载失效与 HTTPS 混合内容拦截

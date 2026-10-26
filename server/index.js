@@ -168,6 +168,8 @@ class LanFileShare extends require('events').EventEmitter {
 
     this._wireDeviceManager();
     this._buildApp();
+    // 本机设备以设备名注册为会话常驻成员（跨设备联邦后对方上线即可见）
+    if (this.chat) this.chat.setDeviceMember({ id: 'device-' + this.deviceId, name: this.deviceName, deviceId: this.deviceId });
     await this._startHttp();
     this._startDiscovery();
 
@@ -596,6 +598,7 @@ class LanFileShare extends require('events').EventEmitter {
 
     if (patch.deviceName && patch.deviceName !== before.deviceName) {
       this.deviceName = patch.deviceName;
+      if (this.chat) this.chat.setDeviceMember({ id: 'device-' + this.deviceId, name: this.deviceName, deviceId: this.deviceId });
       this._refreshMdnsSharedCount();
     }
     if (patch.heartbeatInterval && patch.heartbeatInterval !== before.heartbeatInterval && this.udp) {

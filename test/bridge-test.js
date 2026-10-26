@@ -27,7 +27,8 @@ async function wsClient(port, name, clientId) {
       const m = JSON.parse(raw.toString());
       events.push(m);
       if (m.event === 'chat.msg' && m.payload.sender_id !== clientId) {
-        console.log(`  ✔ [${name}] 收到消息: "${m.payload.text}" (来自 ${m.payload.sender_name})`);
+        const desc = m.payload.kind === 'file' ? '[文件] ' + JSON.parse(m.payload.file_meta || '[]').map((f) => f.name).join(', ') : m.payload.text;
+        console.log(`  ✔ [${name}] 收到消息: "${desc}" (来自 ${m.payload.sender_name})`);
       }
       if (m.event === 'chat.members') {
         console.log(`  ✔ [${name}] 成员列表(${m.payload.length}): ${m.payload.map((x) => x.name).join(', ')}`);
@@ -129,6 +130,20 @@ async function main() {
   const members2 = c2.events.filter((m) => m.event === 'chat.members').map((m) => m.payload).pop() || [];
   const hasRemoteMember = members2.some((m) => m.id.endsWith('@' + selfA.deviceId.slice(0, 8)));
   console.log(hasRemoteMember ? `  ✔ B 成员列表含 A 的远端成员（共 ${members2.length} 人）` : `  ✘ B 成员列表缺少 A 的远端成员: ${JSON.stringify(members2.map((m) => m.id))}`);
+
+  console.log('== 设备常驻成员：B 应直接看到 A 的设备成员（设备名命名，kind=device） ==');
+  const deviceMemberB = members2.find((m) => m.kind === 'device' && m.deviceId === selfA.deviceId);
+  console.log(
+    deviceMemberB
+      ? `  ✔ B 看到 A 的设备常驻成员「${deviceMemberB.name}」`
+      : `  ✘ B 未看到 A 的设备常驻成员: ${JSON.stringify(members2.map((m) => ({ id: m.id, kind: m.kind, deviceId: m.deviceId })))}`
+  );
+  const localDeviceA = await (await fetch('http://127.0.0.1:18200/api/chat/members')).json().catch(() => null);
+  if (localDeviceA) {
+    const list = localDeviceA.members || localDeviceA;
+    const dm = (Array.isArray(list) ? list : []).find((m) => m.kind === 'device' && m.deviceId === selfA.deviceId);
+    console.log(dm ? `  ✔ A 本机成员列表含设备常驻成员「${dm.name}」` : '  ✘ A 本机成员列表缺少设备常驻成员');
+  }
 
   console.log('== 自诊断（实例 B） ==');
   const diag = await (await fetch('http://127.0.0.1:18201/api/admin/diagnose', { method: 'POST' })).json();

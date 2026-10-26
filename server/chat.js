@@ -22,6 +22,8 @@ class ChatManager {
     this.ctx = ctx; // LanFileShare 实例
     /** @type {Map<WebSocket, {id:String,name:String,kind:String,deviceId:String|null}>} */
     this.members = new Map();
+    /** 设备常驻成员（引擎注册，以设备名命名，始终在线） */
+    this.deviceMember = null;
     // NAS 场景可通过 LFS_CHAT_FILES 指向共享目录（用户可在文件管理器中直接管理接收的文件）
     this.filesDir = process.env.LFS_CHAT_FILES || path.join(ctx.dataDir, CHAT_FILES_DIR);
     try {
@@ -57,6 +59,11 @@ class ChatManager {
     app.get('/api/chat/history', (req, res) => {
       const before = req.query.before ? Number(req.query.before) : null;
       res.json(this.ctx.db.listChatMessages(200, before));
+    });
+
+    // 当前成员列表（本机 + 桥接远端聚合）
+    app.get('/api/chat/members', (req, res) => {
+      res.json({ members: this._combinedMembers() });
     });
 
     // 会话页二维码（供管理端展示，手机扫码直达 /chat）
@@ -301,8 +308,18 @@ class ChatManager {
     }
   }
 
+  /** 设备注册为常驻成员（启动即入会，设备改名时同步更新） */
+  setDeviceMember({ id, name, deviceId }) {
+    const next = { id: String(id), name: String(name).slice(0, 40), kind: 'device', deviceId: String(deviceId), ts: Date.now() };
+    const changed = !this.deviceMember || this.deviceMember.id !== next.id || this.deviceMember.name !== next.name;
+    this.deviceMember = next;
+    if (changed) this._broadcastMembers();
+  }
+
   _localMembers() {
-    return [...this.members.values()].map((m) => ({ id: m.id, name: m.name, kind: m.kind, deviceId: m.deviceId }));
+    const list = [...this.members.values()].map((m) => ({ id: m.id, name: m.name, kind: m.kind, deviceId: m.deviceId }));
+    if (this.deviceMember && !list.some((m) => m.id === this.deviceMember.id)) list.unshift(this.deviceMember);
+    return list;
   }
 
   _combinedMembers() {

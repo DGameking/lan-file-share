@@ -697,7 +697,10 @@
     setup() {
       const chatUrl = computed(() => {
         const s = store.self;
-        return s.host && s.port ? `http://${s.host}:${s.port}/chat` : '';
+        if (!s.host || !s.port) return '';
+        // 桌面端内嵌页以设备名+独立身份入会（与浏览器打开的会话页互不覆盖）
+        const name = s.deviceName ? `&name=${encodeURIComponent(s.deviceName)}` : '';
+        return `http://${s.host}:${s.port}/chat?kind=desktop${name}`;
       });
       const loaded = ref(false);
       return { chatUrl, loaded };
