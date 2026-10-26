@@ -11,11 +11,11 @@
 
 | 平台 | 文件 | 架构 |
 |---|---|---|
-| Windows 安装包 | `局域网文件共享-Setup-x.y.z-x64.exe` / `-arm64.exe` | x64 / ARM64 |
-| Windows 便携包 | `局域网文件共享-便携版-x.y.z-x64.zip` / `-arm64.zip` | x64 / ARM64 |
-| macOS 安装 | `局域网文件共享-x.y.z-x64.dmg` / `-arm64.dmg` | Intel / Apple Silicon |
-| macOS 便携 | `局域网文件共享-x.y.z-x64.zip` / `-arm64.zip` | Intel / Apple Silicon |
-| Linux | `局域网文件共享-x.y.z-x64.AppImage` / `-arm64.AppImage` | x64 / ARM64 |
+| Windows 安装包 | `LanFileShare-Setup-x.y.z-x64.exe` / `LanFileShare-Setup-x.y.z-arm64.exe` | x64 / ARM64 |
+| Windows 便携包 | `LanFileShare-Portable-x.y.z-x64.zip` / `LanFileShare-Portable-x.y.z-arm64.zip` | x64 / ARM64 |
+| macOS 安装 | `LanFileShare-x.y.z-x64.dmg` / `LanFileShare-x.y.z-arm64.dmg` | Intel / Apple Silicon |
+| macOS 便携 | `LanFileShare-x.y.z-x64.zip` / `LanFileShare-x.y.z-arm64.zip` | Intel / Apple Silicon |
+| Linux | `LanFileShare-x.y.z-x64.AppImage` / `LanFileShare-x.y.z-arm64.AppImage` | x64 / ARM64 |
 | 飞牛 fnOS | `LanFileShare.fpk` | 单包通用 |
 
 前往 [Releases](https://github.com/DGameking/lan-file-share/releases) 下载。
