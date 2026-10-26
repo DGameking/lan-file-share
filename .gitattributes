@@ -1,0 +1,6 @@
+# 飞牛 fpk 相关文件必须保持 LF（bash 脚本与 INI/JSON 解析依赖）
+fnos-app/cmd/* text eol=lf
+fnos-app/manifest text eol=lf
+fnos-app/config/* text eol=lf
+fnos-app/wizard/* text eol=lf
+*.sh text eol=lf
