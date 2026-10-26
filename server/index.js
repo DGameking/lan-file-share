@@ -327,6 +327,7 @@ class LanFileShare extends require('events').EventEmitter {
       port: this.httpPort,
       os: this.osType,
       version: this.version,
+      fingerprint: this.fingerprint,
       sharedCount: this.enabledShareCount(),
       status: 'online',
     });
@@ -361,6 +362,7 @@ class LanFileShare extends require('events').EventEmitter {
           deviceId: this.deviceId,
           os: this.osType,
           version: this.version,
+          fingerprint: this.fingerprint,
           sharedCount: this.enabledShareCount(),
         });
         this.mdns.browse();
@@ -375,6 +377,39 @@ class LanFileShare extends require('events').EventEmitter {
       () => this.deviceManager.prune((this.settings.offlineTimeout || 10) * 1000),
       3000
     );
+
+    // 失联设备重连扫描：设备 IP 变化或广播不通时，用已记录地址探测并以识别码校验恢复连接
+    setTimeout(() => this._reconnectSweep().catch(() => {}), 8000); // 启动后先试一轮
+    this._reconnectTimer = setInterval(() => this._reconnectSweep().catch(() => {}), 30000);
+  }
+
+  /** 对离线设备逐个探测 /api/self，识别码一致才恢复在线（防止 IP 被其他设备占用） */
+  async _reconnectSweep() {
+    const now = Date.now();
+    for (const d of this.deviceManager.list()) {
+      if (d.is_online || d.is_blacklisted || !d.host || !d.port) continue;
+      if (d._lastProbe && now - d._lastProbe < 25000) continue; // 探测限频
+      d._lastProbe = now;
+      this._probeDevice(d).catch(() => {});
+    }
+  }
+
+  async _probeDevice(d) {
+    const res = await fetch(`http://${d.host}:${d.port}/api/self`, { signal: AbortSignal.timeout(2000) });
+    if (!res.ok) return;
+    const info = await res.json();
+    if (!info || info.deviceId !== d.device_id) return; // 识别码校验
+    this.logger && this.logger.info('discovery', `设备重连成功「${info.deviceName}」`, { id: info.deviceId, host: d.host, port: d.port });
+    this._onPeer({
+      deviceId: info.deviceId,
+      deviceName: info.deviceName,
+      host: d.host,
+      port: info.port || d.port,
+      os: info.os,
+      version: info.version,
+      fingerprint: info.fingerprint,
+      sharedCount: info.sharedCount,
+    });
   }
 
   _onPeer(info) {
@@ -508,6 +543,7 @@ class LanFileShare extends require('events').EventEmitter {
           deviceId: this.deviceId,
           os: this.osType,
           version: this.version,
+          fingerprint: this.fingerprint,
           sharedCount: this.enabledShareCount(),
         });
       } catch (e) {}
@@ -745,7 +781,23 @@ class LanFileShare extends require('events').EventEmitter {
     if (!file || !fs.existsSync(file)) throw new Error('no_downloaded_file');
     if (process.platform === 'win32') {
       const { spawn } = require('child_process');
-      const child = spawn(file, ['/S'], { detached: true, stdio: 'ignore', windowsHide: true });
+      const os = require('os');
+      // NSIS /S 静默安装完成后不会自行启动应用，用批处理接棒：
+      // 等旧实例退出 → 静默安装 → 启动新版（安装目录 = 当前 exe 所在目录；便携版则用默认安装目录）
+      const execPath = process.execPath;
+      const defaultTarget = path.join(os.homedir(), 'AppData', 'Local', 'Programs', '局域网文件共享', 'LanFileShare.exe');
+      const bat = [
+        '@echo off',
+        'chcp 65001 >nul',
+        'ping -n 3 127.0.0.1 >nul', // 等旧实例退出，释放 exe 文件锁
+        `"${file}" /S`,
+        'ping -n 2 127.0.0.1 >nul',
+        `if exist "${defaultTarget}" ( start "" "${defaultTarget}" ) else ( start "" "${execPath}" )`,
+        '',
+      ].join('\r\n');
+      const batPath = file.replace(/\.exe$/i, '-update.cmd');
+      fs.writeFileSync(batPath, bat, 'utf8');
+      const child = spawn(batPath, [], { detached: true, stdio: 'ignore', windowsHide: true });
       child.unref();
       this.emit('update.install');
       return { ok: true, mode: 'auto' };

@@ -118,6 +118,7 @@ class BridgeManager {
     ws.on('close', () => {
       if (this.outbound.get(id) === ws) this.outbound.delete(id);
       if (this.engine.logger) this.engine.logger.info('bridge', `桥接断开（本端发起）`, { peer: id, host: d.host });
+      if (process.env.LFS_BRIDGE_DEBUG) console.error(`[bridge-dbg] outbound close peer=${id}`);
       if (!this._destroyed) this._scheduleConnect(d, 8000);
     });
     ws.on('error', () => { /* close 会跟随触发 */ });
@@ -164,6 +165,7 @@ class BridgeManager {
       ws.on('close', () => {
         this.inbound.delete(ws);
         if (this.engine.logger) this.engine.logger.info('bridge', `桥接断开（对端连入）`, { peer: info.deviceId });
+        if (process.env.LFS_BRIDGE_DEBUG) console.error(`[bridge-dbg] inbound close peer=${info.deviceId}`);
         let changed = false;
         if (this.remoteMembers.delete(info.deviceId)) changed = true;
         if (this.remoteShares.delete(info.deviceId)) changed = true;
@@ -180,6 +182,7 @@ class BridgeManager {
 
     if (msg.type === 'bridge.event') {
       const origin = String(msg.origin || '');
+      if (process.env.LFS_BRIDGE_DEBUG) console.error(`[bridge-dbg] recv ${msg.event} from ${origin}`);
       if (!origin || origin === this.engine.deviceId) return false;
       const event = String(msg.event || '');
       // 共享目录：存表并通知本机客户端
@@ -202,14 +205,21 @@ class BridgeManager {
   /** 将本机事件转发给所有已桥接的对端 */
   relay(event, payload) {
     const msg = JSON.stringify({ type: 'bridge.event', event, payload, origin: this.engine.deviceId });
+    if (process.env.LFS_BRIDGE_DEBUG) console.error(`[bridge-dbg] relay ${event} → outbound=${this.outbound.size} inbound=${this.inbound.size}`);
     for (const ws of this.outbound.values()) this._send(ws, msg);
     for (const ws of this.inbound.keys()) this._send(ws, msg);
   }
 
   _send(ws, data) {
     try {
-      if (ws.readyState === WebSocket.OPEN) ws.send(typeof data === 'string' ? data : JSON.stringify(data));
-    } catch (e) {}
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(typeof data === 'string' ? data : JSON.stringify(data));
+      } else if (process.env.LFS_BRIDGE_DEBUG) {
+        console.error(`[bridge-dbg] send skip: readyState=${ws.readyState}`);
+      }
+    } catch (e) {
+      if (process.env.LFS_BRIDGE_DEBUG) console.error('[bridge-dbg] send error:', e.message);
+    }
   }
 
   /* ---------------- 远端成员聚合 ---------------- */

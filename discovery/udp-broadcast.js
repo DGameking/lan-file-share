@@ -69,6 +69,7 @@ class UdpDiscovery extends EventEmitter {
       port: data.port || this.port,
       os: data.os,
       version: data.version,
+      fingerprint: data.fingerprint,
       sharedCount: data.sharedCount,
       status: data.status,
     });

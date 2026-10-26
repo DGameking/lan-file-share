@@ -7,7 +7,13 @@ const fs = require('fs');
 
 const BASE = process.cwd();
 const NODE = process.execPath;
+const { execSync } = require('child_process');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Windows 上 child.kill() 不会杀死孙进程树，残留实例会占用端口污染下一轮测试
+function killTree(child) {
+  try { execSync(`taskkill /PID ${child.pid} /T /F`, { stdio: 'ignore' }); } catch (e) {}
+}
 
 function startInstance(port, dataDir) {
   const child = execFile(NODE, [path.join(BASE, 'server', 'index.js')], {
@@ -60,7 +66,9 @@ async function main() {
   console.log('== B 桥接日志 ==');
   (await logs(18221)).slice(-10).forEach((l) => console.log('  [B]', l.slice(0, 160)));
 
-  wsA.close(); wsB.close(); a.kill(); b.kill();
+  wsA.close(); wsB.close();
+  killTree(a); killTree(b);
+  await wait(1500);
   process.exit(0);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

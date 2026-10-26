@@ -59,7 +59,7 @@ async function main() {
   const selfB = await (await fetch('http://127.0.0.1:18201/api/self')).json();
   console.log('A 设备ID:', selfA.deviceId);
   console.log('B 设备ID:', selfB.deviceId);
-  await wait(6000); // 等待 UDP 心跳互见 + 桥接建立（含重试）
+  await wait(9000); // 等待 UDP 心跳互见 + 桥接建立（含重试）
   const devA = (await (await fetch('http://127.0.0.1:18200/api/devices')).json());
   const devB = (await (await fetch('http://127.0.0.1:18201/api/devices')).json());
   const listA = devA.devices || devA;
@@ -70,7 +70,7 @@ async function main() {
   console.log('== 客户端连入 A、B ==');
   const c1 = await wsClient(18200, 'A页面用户', 'ua1');
   const c2 = await wsClient(18201, 'B页面用户', 'ub1');
-  await wait(4000); // 等待成员桥接同步
+  await wait(8000); // 等待成员桥接同步（真实局域网设备多时桥接建立较慢）
 
   console.log('== A 发消息，B 应能收到 ==');
   c1.ws.send(JSON.stringify({ type: 'chat.send', text: '跨设备桥测试消息' }));
@@ -154,8 +154,10 @@ async function main() {
 
   console.log('== 完成，清理 ==');
   c1.ws.close(); c2.ws.close();
-  a.kill(); b.kill();
-  await wait(800);
+  const { execSync } = require('child_process');
+  try { execSync(`taskkill /PID ${a.pid} /T /F`, { stdio: 'ignore' }); } catch (e) {}
+  try { execSync(`taskkill /PID ${b.pid} /T /F`, { stdio: 'ignore' }); } catch (e) {}
+  await wait(1500);
   process.exit(0);
 }
 

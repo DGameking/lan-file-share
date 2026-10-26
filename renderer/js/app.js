@@ -344,6 +344,21 @@
       const inviteCode = ref('');
       const myInvite = ref('');
 
+      // 识别码格式化：8 位指纹 → LF-XXXX-XXXX（IP 变化后凭此确认设备身份）
+      function fpFmt(fp) {
+        const s = String(fp || '').replace(/[^0-9a-fA-F]/g, '');
+        if (!s) return 'LF-????-????';
+        return ('LF-' + s.slice(0, 4) + '-' + s.slice(4, 8)).toUpperCase();
+      }
+      const sortedDevices = computed(() => {
+        return [...store.devices].sort((a, b) => {
+          if (a.is_online !== b.is_online) return a.is_online ? -1 : 1; // 在线优先
+          if (a.is_blacklisted !== b.is_blacklisted) return a.is_blacklisted ? 1 : -1;
+          return String(a.device_name || '').localeCompare(String(b.device_name || ''), 'zh');
+        });
+      });
+      const onlineCount = computed(() => store.devices.filter((d) => d.is_online).length);
+
       async function ping(id) {
         const r = await api.invoke('engine:pingDevice', id);
         toast('延迟: ' + (r.ok ? r.data + ' ms' : '不可达'), r.ok && r.data >= 0 ? 'ok' : 'warn');
@@ -367,58 +382,90 @@
         if (r.ok) toast('已加入设备: ' + (r.data.device ? r.data.device.device_name : ''), 'ok');
         else toast('加入失败: ' + (r.error || '未知'), 'warn');
       }
+      function copyFp() {
+        const s = String(store.self.fingerprint || '');
+        if (s) { copy(s); toast('识别码已复制，对方可通过它确认本机身份', 'ok'); }
+      }
 
-      return { store, host, port, inviteCode, myInvite, ping, trust, blacklist, connect, discover, createInvite, joinInvite, copy };
+      return { store, host, port, inviteCode, myInvite, ping, trust, blacklist, connect, discover, createInvite, joinInvite, copy,
+               fpFmt, sortedDevices, onlineCount, copyFp };
     },
     template: `
       <div>
-        <div class="card">
-          <h3>手动连接 / 邀请</h3>
-          <div class="row" style="align-items:flex-end">
-            <label class="field">主机地址<input type="text" v-model="host" placeholder="例如 192.168.1.20" /></label>
-            <label class="field">端口<input type="text" v-model="port" placeholder="默认 8080" style="width:90px" /></label>
-            <button class="btn" @click="connect">连接</button>
-            <button class="btn ghost" @click="discover">探测局域网</button>
+        <!-- 本机识别卡 -->
+        <div class="card self-card">
+          <div class="dc-head">
+            <div class="dc-avatar">本</div>
+            <div class="dc-info">
+              <div class="dc-name">{{ store.self.deviceName || '本机' }} <span class="tag blue">本机</span></div>
+              <div class="muted">识别码 <b class="mono" style="color:var(--primary);letter-spacing:1px">{{ fpFmt(store.self.fingerprint) }}</b>
+                <button class="btn sm ghost" style="margin-left:6px" @click="copyFp">复制</button></div>
+              <div class="muted mono">{{ store.self.host }}:{{ store.self.port }} · 版本 v{{ store.self.version }}</div>
+            </div>
             <span style="flex:1"></span>
-            <button class="btn ghost" @click="createInvite">生成邀请码</button>
-            <label class="field">邀请码<input type="text" v-model="inviteCode" placeholder="6 位" style="width:110px" /></label>
-            <button class="btn" @click="joinInvite">加入</button>
+            <button class="btn ghost" @click="discover">📡 探测局域网</button>
           </div>
-          <div v-if="myInvite" class="row" style="margin-top:12px">
-            <span class="muted">我的邀请码：</span>
-            <span class="mono" style="font-size:18px;letter-spacing:2px">{{ myInvite }}</span>
-            <button class="btn sm ghost" @click="copy(myInvite)">复制</button>
-            <span class="muted">（10 分钟内有效，发给同一局域网的好友）</span>
+          <div class="muted" style="margin-top:10px">💡 每台设备有唯一识别码。对方 IP 变化后，软件会自动重新连接，无需手动操作；识别码用于确认「这就是那台设备」。</div>
+        </div>
+
+        <!-- 手动连接 / 邀请 -->
+        <div class="card">
+          <h3>添加设备</h3>
+          <div class="two-col">
+            <div>
+              <div class="muted" style="margin-bottom:8px">方式一 · 按 IP 直连（同网段可用）</div>
+              <div class="row" style="align-items:flex-end">
+                <label class="field">主机地址<input type="text" v-model="host" placeholder="例如 192.168.1.20" /></label>
+                <label class="field">端口<input type="text" v-model="port" placeholder="默认 8080" style="width:90px" /></label>
+                <button class="btn" @click="connect">连接</button>
+              </div>
+            </div>
+            <div>
+              <div class="muted" style="margin-bottom:8px">方式二 · 邀请码配对（对方生成，你填入）</div>
+              <div class="row" style="align-items:flex-end">
+                <label class="field">对方邀请码<input type="text" v-model="inviteCode" placeholder="6 位数字" style="width:130px" /></label>
+                <button class="btn" @click="joinInvite">加入</button>
+                <span style="flex:1"></span>
+                <button class="btn ghost" @click="createInvite">{{ myInvite ? '重新生成' : '生成我的邀请码' }}</button>
+              </div>
+              <div v-if="myInvite" class="row" style="margin-top:10px">
+                <span class="muted">我的邀请码：</span>
+                <span class="mono" style="font-size:18px;letter-spacing:3px;color:var(--green)">{{ myInvite }}</span>
+                <button class="btn sm ghost" @click="copy(myInvite)">复制</button>
+                <span class="muted">10 分钟内有效</span>
+              </div>
+            </div>
           </div>
         </div>
 
+        <!-- 设备网格 -->
         <div class="card">
-          <h3>发现的设备（{{ store.devices.length }}）</h3>
-          <div v-if="store.devices.length === 0" class="empty">暂无设备，点击「探测局域网」试试</div>
-          <table v-else>
-            <thead><tr><th>名称</th><th>系统</th><th>地址</th><th>共享</th><th>状态</th><th>操作</th></tr></thead>
-            <tbody>
-              <tr v-for="d in store.devices" :key="d.device_id">
-                <td>{{ d.device_name }}<div class="muted" v-if="d.is_trusted">已信任</div></td>
-                <td>{{ d.os || '-' }}</td>
-                <td class="mono" style="font-size:12px">{{ d.host }}:{{ d.port }}</td>
-                <td>{{ d.sharedCount || 0 }}</td>
-                <td>
-                  <span class="tag" :class="d.is_online ? 'green' : 'gray'">{{ d.is_online ? '在线' : '离线' }}</span>
-                  <span v-if="d.is_blacklisted" class="tag red">已拉黑</span>
-                </td>
-                <td>
-                  <div class="row">
-                    <button class="btn sm ghost" @click="ping(d.device_id)">Ping</button>
-                    <button class="btn sm ghost" v-if="!d.is_trusted && !d.is_blacklisted" @click="trust(d.device_id, true)">信任</button>
-                    <button class="btn sm ghost" v-if="d.is_trusted" @click="trust(d.device_id, false)">取消信任</button>
-                    <button class="btn sm danger" v-if="!d.is_blacklisted" @click="blacklist(d.device_id, true)">拉黑</button>
-                    <button class="btn sm ghost" v-if="d.is_blacklisted" @click="blacklist(d.device_id, false)">解除</button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <h3>局域网设备（<span style="color:var(--green)">{{ onlineCount }}</span> 在线 / 共 {{ store.devices.length }} 台）</h3>
+          <div v-if="store.devices.length === 0" class="empty">还没有发现设备 — 同一局域网内的设备会自动出现，也可以用上方邀请码或 IP 添加</div>
+          <div v-else class="device-grid">
+            <div class="dev-card" v-for="d in sortedDevices" :key="d.device_id" :class="{ off: !d.is_online }">
+              <div class="dc-head">
+                <div class="dc-avatar" :style="d.is_online ? '' : 'filter:grayscale(1);opacity:.45'">{{ (d.device_name || '?').slice(0,1).toUpperCase() }}</div>
+                <div class="dc-info">
+                  <div class="dc-name">{{ d.device_name }} <span class="dot" :class="d.is_online ? 'on' : 'off2'"></span></div>
+                  <div class="dc-os">{{ d.os || '-' }} · <span class="mono">{{ fpFmt(d.fingerprint) }}</span></div>
+                  <div class="dc-os muted">{{ d.host }}:{{ d.port }}</div>
+                </div>
+              </div>
+              <div class="row" style="margin-top:8px;gap:6px">
+                <span class="tag" :class="d.is_online ? 'green' : 'gray'">{{ d.is_online ? '在线' : '离线' }}</span>
+                <span class="tag blue" v-if="d.is_trusted">已信任</span>
+                <span class="tag red" v-if="d.is_blacklisted">已拉黑</span>
+              </div>
+              <div class="dc-actions">
+                <button class="btn sm ghost" @click="ping(d.device_id)">Ping</button>
+                <button class="btn sm ghost" v-if="!d.is_trusted && !d.is_blacklisted" @click="trust(d.device_id, true)">信任</button>
+                <button class="btn sm ghost" v-if="d.is_trusted" @click="trust(d.device_id, false)">取消信任</button>
+                <button class="btn sm danger" v-if="!d.is_blacklisted" @click="blacklist(d.device_id, true)">拉黑</button>
+                <button class="btn sm ghost" v-if="d.is_blacklisted" @click="blacklist(d.device_id, false)">解除</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     `,
@@ -478,13 +525,14 @@
       }
 
       // ---- 应用内下载与安装 ----
-      const dl = ref(null); // {starting} | {name,received,total,pct} | {done,version} 
+      const dl = ref(null); // {starting} | {name,received,total,pct} | {done,version}
       async function startDownload() {
         dl.value = { starting: true };
         const r = await api.invoke('engine:update:download');
-        if (!r.ok) {
+        const d = (r && r.data) || {};
+        if (!d.ok) {
           dl.value = null;
-          toast('下载失败：' + (r.hint || r.error || ''), 'warn');
+          toast('下载失败：' + (d.hint || d.error || ''), 'warn');
         }
       }
       function abortDownload() {
@@ -493,7 +541,10 @@
       }
       async function installNow() {
         const r = await api.invoke('engine:update:install');
-        if (r.ok && r.mode === 'manual') toast('已打开安装文件，请手动完成安装', 'ok');
+        const d = (r && r.data) || {};
+        if (d.ok && d.mode === 'auto') toast('正在静默安装，完成后应用将自动重启…', 'ok');
+        else if (d.ok && d.mode === 'manual') toast('已打开安装文件，请手动完成安装', 'ok');
+        else toast('安装失败：' + ((r && r.error) || d.error || '请先下载更新包'), 'warn');
       }
       onMounted(() => {
         api.on('update.progress', (p) => {
