@@ -3,9 +3,14 @@
 PID_FILE="${TRIM_PKGVAR}/app.pid"
 LOG_FILE="${TRIM_PKGVAR}/info.log"
 
-# Node.js 运行时（manifest 中声明 install_dep_apps=nodejs_v22）
-if [ -d "/var/apps/nodejs_v22/target/bin" ]; then
-  export PATH="/var/apps/nodejs_v22/target/bin:$PATH"
+# Node.js：优先用包内自带的运行时（离线自包含，不依赖应用中心）
+NODE_BIN="${TRIM_APPDEST}/target/runtime/node/bin/node"
+if [ ! -x "$NODE_BIN" ]; then
+  if [ -x "/var/apps/nodejs_v22/target/bin/node" ]; then
+    NODE_BIN="/var/apps/nodejs_v22/target/bin/node"
+  else
+    NODE_BIN="node"
+  fi
 fi
 
 # 数据目录与会话文件目录（received 为用户可见共享目录）
@@ -25,7 +30,7 @@ case "$1" in
       exit 0
     fi
     cd "${TRIM_APPDEST}/target" || exit 1
-    nohup node server/index.js >> "$LOG_FILE" 2>&1 &
+    nohup "$NODE_BIN" server/index.js >> "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     sleep 1
     if is_running; then

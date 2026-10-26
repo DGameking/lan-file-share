@@ -1,9 +1,10 @@
 {
-  "data-share": {
-    "shares": [
-      {
-        "name": "lanfileshare/received"
-      }
-    ]
-  }
+    "data-share":
+    {
+        "shares": [
+            {
+                "name": "lanfileshare/received"
+            }
+        ]
+    }
 }

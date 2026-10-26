@@ -1,7 +1,8 @@
 {
-  "defaults": {
-    "run-as": "package"
-  },
-  "username": "lanfileshare",
-  "groupname": "lanfileshare"
+    "defaults":
+    {
+        "run-as": "package"
+    },
+    "username": "lanfileshare",
+    "groupname": "lanfileshare"
 }

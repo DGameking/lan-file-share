@@ -12,3 +12,9 @@ fnos-app/app/target/node_modules/
 fnos-app/app/target/
 build/Modern_flat_app_icon_design*.png
 build/Remove_the_small__AI*.png
+tools/node-extract/
+tools/node-linux-x64.tar.gz
+tools/node-extract/
+tools/node-linux-x64.tar.gz
+fnos-app/LanFileShare.fpk
+fnos-app/runtime/

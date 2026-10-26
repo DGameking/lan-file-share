@@ -45,4 +45,13 @@ fs.writeFileSync(
 console.log('[fpk] 安装生产依赖…');
 execSync('npm install --omit=dev --no-audit --no-fund --loglevel=error', { cwd: TARGET, stdio: 'inherit' });
 
+// 4. 打包内置 Node 运行时（离线自包含，免去应用中心 nodejs_v22 依赖）
+const RUNTIME_SRC = path.join(ROOT, 'fnos-app', 'runtime', 'node');
+if (fs.existsSync(path.join(RUNTIME_SRC, 'bin', 'node'))) {
+  fs.cpSync(RUNTIME_SRC, path.join(TARGET, 'runtime', 'node'), { recursive: true });
+  console.log('[fpk] 内置 Node 运行时已复制');
+} else {
+  console.warn('[fpk] 警告：缺少 fnos-app/runtime/node/bin/node（见 tools/node-linux-x64.tar.gz）');
+}
+
 console.log('[fpk] target 就绪。下一步：cd fnos-app && ../tools/fnpack.exe build');
