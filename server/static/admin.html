@@ -90,6 +90,10 @@
       <main>
         <!-- 概览 -->
         <section v-show="tab === 'overview'">
+          <div v-if="updateAvail" style="background:var(--panel);border:1px solid var(--green);border-radius:12px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span style="color:var(--green);font-weight:600">🎉 发现新版本 v{{ updateAvail.latest }}（当前 v{{ updateAvail.current }}）</span>
+            <a :href="updateAvail.url" target="_blank"><button class="sm">前往下载</button></a>
+          </div>
           <div class="cards">
             <div class="stat"><span>运行中共享</span><b>{{ stats.shares }}<span class="muted small"> / {{ stats.totalShares }}</span></b></div>
             <div class="stat"><span>在线设备</span><b>{{ stats.onlineDevices }}<span class="muted small"> / {{ stats.devices }}</span></b></div>
@@ -375,6 +379,15 @@
           }
           async function loadLogs() { logs.value = await req('/api/logs'); }
 
+          // 启动时静默检查更新（引擎侧 24h 节流）
+          const updateAvail = ref(null);
+          async function checkUpdateBanner() {
+            try {
+              const r = await req('/api/update/check?auto=1');
+              if (r.checked && r.hasUpdate) updateAvail.value = r;
+            } catch (e) {}
+          }
+
           // ---------- 登录 ----------
           function showLogin(hint) {
             document.getElementById('login').style.display = 'block';
@@ -509,6 +522,7 @@
           async function boot() {
             try {
               await loadAll();
+              checkUpdateBanner();
               document.getElementById('login').style.display = 'none';
               document.getElementById('app').style.display = 'block';
               remote.value = !!token();
@@ -522,7 +536,7 @@
           return {
             tab, tabs, remote, self, fingerprint, stats, shares, devices, ping, logs, form,
             shareModal, shareForm, qrUrl, qrLink, connectShow, connectForm, pwShow, pwForm, chatQr, chatUrl, base,
-            runtimeLogs, runtimeAuto, diagResult, diagRunning,
+            runtimeLogs, runtimeAuto, diagResult, diagRunning, updateAvail,
             doLogin, logout, openShareModal, saveShare, toggleShare, removeShare, showQr,
             discover, trust, blacklist, doPing, connectManual, loadLogs, clearLogs, saveSettings, savePassword,
             loadRuntime, toggleRuntimeAuto, runDiag,

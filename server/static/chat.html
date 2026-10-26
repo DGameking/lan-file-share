@@ -254,7 +254,7 @@ function fileHtml(f){
   var icon = isImage(f.mime,f.name)?'🖼':isVideo(f.mime,f.name)?'🎬':/^audio\//.test(f.mime||'')?'🎵':'📦';
   var h='<a class="file-card" href="'+fileUrl+'" download="'+esc(f.name)+'">'+
     '<span class="f-ic">'+icon+'</span><span><div class="f-name">'+esc(f.name)+'</div>'+
-    '<div class="f-size">'+fmtSize(f.size)+(f.relPath&&f.relPath!=='false'&&f.relPath.indexOf('/')>=0?' · '+esc(f.relPath.split('/')[0])+'/…':'')+(f.origin?' · <span style="opacity:.6">来自其他设备</span>':'')+'</div></span></a>';
+    '<div class="f-size">'+fmtSize(f.size)+(f.relPath&&f.relPath!=='false'&&f.relPath.indexOf('/')>=0?' · '+esc(f.relPath.split('/')[0])+'/…':'')+(f.origin?' · <span style="opacity:.6" title="文件保存在发送方设备，保存时与本机点对点直传">点对点传输</span>':'')+'</div></span></a>';
   if(isImage(f.mime,f.name)) h+='<img class="img-prev" loading="lazy" src="'+prevUrl+'" onclick="showImg(this.src)" onerror="imgFail(this)" />';
   if(isVideo(f.mime,f.name)) h+='<video class="img-prev" controls preload="metadata" src="'+prevUrl+'" onerror="vidFail(this)"></video>';
   if(/^audio\//.test(f.mime||'')) h+='<audio controls style="display:block;margin-top:4px;max-width:280px" src="'+prevUrl+'"></audio>';

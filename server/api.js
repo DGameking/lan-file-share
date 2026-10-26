@@ -49,6 +49,12 @@ function registerApi(ctx) {
     }
   });
 
+  // ---------------- 更新检查 ----------------
+  app.get('/api/update/check', async (req, res) => {
+    const auto = req.query.auto === '1';
+    res.json(await ctx.checkUpdate(!auto ? false : true).catch((e) => ({ checked: false, error: e.message })));
+  });
+
   // ---------------- 设备 ----------------
   app.get('/api/devices', (req, res) => res.json(ctx.deviceManager.list()));
 

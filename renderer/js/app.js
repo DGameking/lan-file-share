@@ -67,6 +67,13 @@
       const speedDown = computed(() => formatSpeed(store.stats.speed ? store.stats.speed.down : 0));
       const recentLogs = computed(() => store.logs.slice(0, 8));
 
+      // 启动即静默检查更新（引擎侧 24h 节流；发现新版本仅提示不打扰）
+      onMounted(() => {
+        api.invoke('engine:checkUpdate', { auto: true }).then((r) => {
+          if (r.ok && r.data && r.data.checked && r.data.hasUpdate) toast(`🎉 发现新版本 v${r.data.latest}，可在「设置 → 更新」中下载`, 'ok');
+        }).catch(() => {});
+      });
+
       return { store, homeUrl, trafficUp, trafficDown, speedUp, speedDown, recentLogs, copy, toast };
     },
     template: `
@@ -367,7 +374,38 @@
       function openLogsDir() {
         api.invoke('engine:openLogsDir');
       }
-      return { store, save, onText, onCheck, fps, copy, onHttps, httpsChanged, relaunch, diag, diagRunning, runDiag, openLogsDir };
+
+      // ---- 更新检查 ----
+      const updateInfo = ref(null);
+      const checking = ref(false);
+      async function checkUpdate(auto) {
+        checking.value = true;
+        const r = await api.invoke('engine:checkUpdate', { auto: !!auto });
+        checking.value = false;
+        if (r.ok) {
+          updateInfo.value = r.data;
+          if (r.data.checked && r.data.hasUpdate) toast(`发现新版本 v${r.data.latest}`, 'ok');
+          else if (r.data.checked) toast('已是最新版本', 'ok');
+        }
+      }
+      function openUpdateUrl() {
+        if (updateInfo.value && updateInfo.value.url) api.invoke('engine:openExternal', updateInfo.value.url);
+      }
+
+      // ---- 服务器模式 ----
+      const serverAddr = computed(() => `${store.settings.localIp || store.self.host}:${store.self.port}`);
+      async function copyServerAddr() {
+        await api.invoke('clip:write', `http://${serverAddr.value}`);
+        toast('服务地址已复制', 'ok');
+      }
+      function openAdmin() {
+        api.invoke('engine:openExternal', `http://${serverAddr.value}/admin`);
+      }
+      // 启动时静默自动检查（24h 节流，由引擎控制）
+      checkUpdate(true);
+
+      return { store, save, onText, onCheck, fps, copy, onHttps, httpsChanged, relaunch, diag, diagRunning, runDiag, openLogsDir,
+               updateInfo, checking, checkUpdate, openUpdateUrl, serverAddr, copyServerAddr, openAdmin };
     },
     template: `
       <div>
@@ -420,6 +458,34 @@
             <button class="btn sm ghost" @click="relaunch" v-if="httpsChanged">🔄 立即重启生效</button>
           </div>
           <div class="muted" style="margin-top:8px">开启后：屏幕共享与“添加到主屏幕（PWA）”可用，传输全程加密；手机首次访问需在浏览器中信任证书警告</div>
+        </div>
+
+        <div class="card">
+          <h3>服务器模式</h3>
+          <div class="row" style="align-items:center">
+            <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.serverMode" @change="onCheck($event,'serverMode')" /> 以文件服务器方式运行（启动时不弹主界面，后台共享服务持续运行）</label>
+          </div>
+          <div class="row" style="margin-top:8px;align-items:center">
+            <span class="muted">服务地址：</span><span class="mono" style="font-size:12px">http://{{ serverAddr }}</span>
+            <button class="btn ghost sm" @click="copyServerAddr">复制</button>
+            <button class="btn ghost sm" @click="openAdmin">打开管理控制台</button>
+          </div>
+          <div class="muted" style="margin-top:6px">开启后可把本机当作局域网文件服务器：配合开机自启动，设备开机即自动提供共享与会话服务；管理/设置随时通过托盘或管理控制台完成。会话中的文件由发送方设备点对点提供下载。</div>
+        </div>
+
+        <div class="card">
+          <h3>更新</h3>
+          <div class="row" style="align-items:center">
+            <span class="muted">当前版本 v{{ store.self.version }}</span>
+            <button class="btn sm" @click="checkUpdate(false)" :disabled="checking">{{ checking ? '检查中…' : '检查更新' }}</button>
+            <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.autoUpdateCheck" @change="onCheck($event,'autoUpdateCheck')" /> 自动检查（每天一次）</label>
+          </div>
+          <div v-if="updateInfo && updateInfo.checked && updateInfo.hasUpdate" class="row" style="margin-top:8px;align-items:center">
+            <span style="color:var(--ok,#16a34a);font-weight:600">🎉 新版本 v{{ updateInfo.latest }} 可用</span>
+            <button class="btn sm" @click="openUpdateUrl">前往下载</button>
+          </div>
+          <div v-else-if="updateInfo && updateInfo.checked" class="muted" style="margin-top:8px">已是最新版本</div>
+          <div class="muted" style="margin-top:6px">版本发布地址：github.com/DGameking/lan-file-share/releases</div>
         </div>
 
         <div class="card">

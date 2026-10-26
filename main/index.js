@@ -143,6 +143,11 @@ function registerIpc() {
     return { ok: true };
   });
   h('engine:diagnose', async () => require('../server/diagnostics').run(engine));
+  h('engine:checkUpdate', (opts) => engine.checkUpdate(!!(opts && opts.auto)));
+  h('engine:openExternal', (url) => {
+    if (/^https?:\/\//.test(String(url))) shell.openExternal(String(url));
+    return { ok: true };
+  });
   ipcMain.handle('engine:openLogsDir', async () => {
     if (engine) shell.openPath(require('path').join(engine.dataDir, 'logs'));
     return { ok: true };
@@ -230,6 +235,19 @@ async function boot() {
   bridgeEngineEvents();
   registerIpc();
   applyAutostart();
+
+  // 服务器模式：主界面不弹出，共享服务在后台持续运行（托盘驻留）
+  if (engine.settings.serverMode && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.hide();
+    try {
+      if (Notification.isSupported()) {
+        new Notification({
+          title: '局域网文件共享服务器已启动',
+          body: `http://${engine.localIp}:${engine.httpPort} · 通过托盘图标或管理控制台管理`,
+        }).show();
+      }
+    } catch (e) {}
+  }
 
   // 剪贴板同步：本机变化 → 推送给所有设备；其他设备变化 → 写入本机剪贴板
   engine.on('clip-incoming', onIncomingClip);

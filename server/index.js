@@ -148,6 +148,8 @@ class LanFileShare extends require('events').EventEmitter {
         clipboardSync: true,
         autoAcceptDrop: true,
         https: false,
+        serverMode: false,
+        autoUpdateCheck: true,
       };
     this.deviceName = this.settings.deviceName || this.deviceName;
     // HTTPS 模式由设置控制（自签证书，重启生效）；屏幕共享 / PWA 需要安全上下文
@@ -594,6 +596,34 @@ class LanFileShare extends require('events').EventEmitter {
     if (!share) throw new Error('共享不存在');
     const url = `http://${this.localIp}:${this.httpPort}/s/${id}`;
     return qrcode.toDataURL(url);
+  }
+
+  /* ---------------- 更新检查 ---------------- */
+  /**
+   * 检查 GitHub 最新版本。auto=true 时 24 小时节流（渲染层/管理端启动时调用），
+   * 手动检查传 auto=false 强制执行。不引入后台定时器 —— 由客户端主动触发。
+   */
+  async checkUpdate(auto = false) {
+    if (!this.settings.autoUpdateCheck) return { checked: false, reason: 'disabled' };
+    if (auto) {
+      const last = Number(this.db.getConfig('update_check_at') || 0);
+      if (Date.now() - last < 24 * 3600 * 1000) {
+        return { checked: false, reason: 'throttled', ...(this._updateInfo || {}) };
+      }
+    }
+    try {
+      const r = await require('./update-checker').checkLatest({ current: this.version });
+      this.db.setConfig('update_check_at', String(Date.now()));
+      this._updateInfo = r;
+      if (r.hasUpdate) {
+        this.logger && this.logger.info('update', `发现新版本 v${r.latest}（当前 v${this.version}）`);
+        this.broadcast('update.available', r);
+      }
+      return { checked: true, ...r };
+    } catch (e) {
+      this.logger && this.logger.warn('update', '检查更新失败（离线或网络受限不影响使用）', e.message);
+      return { checked: false, error: e.message };
+    }
   }
 
   /* ---------------- 信息 / 统计 ---------------- */
