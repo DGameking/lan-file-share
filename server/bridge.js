@@ -145,6 +145,13 @@ class BridgeManager {
       };
       if (!info.deviceId || info.deviceId === this.engine.deviceId) return false;
 
+      // 连接来源地址是可达性的 ground truth（多网卡/虚拟机环境下自报 IP 可能不可达）
+      const sockIp = ((ws._socket && ws._socket.remoteAddress) || '').replace(/^::ffff:/, '');
+      if (sockIp && sockIp !== info.host && this.engine.logger) {
+        this.engine.logger.warn('bridge', '对端自报地址与连接来源不一致（以来源为准）', { peer: info.deviceId, advertised: `${info.host}:${info.port}`, from: sockIp });
+      }
+      if (sockIp && !/^127\./.test(sockIp)) info.host = sockIp;
+
       if (ws._bridgeDir === 'out' || this.outbound.has(info.deviceId)) {
         // 是我方主动连接的对端在回应 —— 只记录地址信息，不重复登记
         this.peerInfo.set(info.deviceId, { host: info.host, port: info.port });

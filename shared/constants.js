@@ -44,15 +44,48 @@ function getLocalIPs() {
 
 /** 虚拟网卡识别 */
 function isVirtualInterface(name) {
-  return /(Virtual|VMware|Hyper-V|vEthernet|docker|vbox|utun|tap|tun|ZeroTier|Tailscale|wg)/i.test(name);
+  return /(Virtual|VMware|VMnet|Hyper-V|vEthernet|docker|vbox|utun|tap|tun|ZeroTier|Tailscale|wg|Loopback|多开|模拟器|VirtualBox)/i.test(name);
 }
 
-/** 选择主用 IP：优先真实网卡，排除链路本地与虚拟网卡 */
+/** 有线/无线物理网卡优先 */
+function isPhysicalInterface(name) {
+  return /(以太网|Ethernet|WLAN|Wi-?Fi|无线|本地连接|en0|eth0)/i.test(name);
+}
+
+/** 路由级主 IP 检测（异步预热，结果缓存）——多网卡/虚拟机环境下比启发式准确 */
+let _routeIp = null;
+function _warmRouteIp() {
+  try {
+    const dgram = require('dgram');
+    const s = dgram.createSocket('udp4');
+    const done = (addr) => {
+      if (addr && addr !== '0.0.0.0' && !/^127\./.test(addr)) _routeIp = addr;
+      try { s.close(); } catch (e) {}
+    };
+    s.on('error', () => done(null));
+    s.connect(53, '8.8.8.8', () => {
+      try { done(s.address().address); } catch (e) { done(null); }
+    });
+  } catch (e) {}
+}
+_warmRouteIp();
+
+/** 选择主用 IP：优先默认路由网卡（异步预热结果），否则按「物理网卡 + 私网段」启发式 */
 function getPrimaryIP() {
   const ips = getLocalIPs();
-  const real = ips.filter((i) => !/^169\.254\./.test(i.address) && !isVirtualInterface(i.name));
-  const pick = real[0] || ips[0];
-  return pick ? pick.address : '127.0.0.1';
+  const usable = ips.filter((i) => !/^169\.254\./.test(i.address) && !/^127\./.test(i.address));
+  if (_routeIp) return _routeIp;
+  const real = usable.filter((i) => !isVirtualInterface(i.name));
+  const scored = (real.length ? real : usable).slice().sort((a, b) => {
+    const s = (i) => {
+      let v = 0;
+      if (isPhysicalInterface(i.name)) v -= 4;
+      if (/^192\.168\./.test(i.address) || /^10\./.test(i.address) || /^172\.(1[6-9]|2\d|3[01])\./.test(i.address)) v -= 2;
+      return v;
+    };
+    return s(a) - s(b);
+  });
+  return scored.length ? scored[0].address : '127.0.0.1';
 }
 
 /** 获取所有广播地址（每个网卡对应一个） */

@@ -328,7 +328,7 @@ async function boot() {
     ? path.join(app.getPath('userData'), 'data')
     : path.join(__dirname, '..', 'data');
 
-  engine = new LanFileShare({ dataDir });
+  engine = new LanFileShare({ dataDir, version: app.getVersion() });
   await engine.init();
   bridgeEngineEvents();
   registerIpc();

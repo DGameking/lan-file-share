@@ -43,6 +43,16 @@ class ChatManager {
       res.type('html').send(html);
     });
 
+    // 清空会话记录（本机 + 桥接联邦内所有设备）
+    app.post('/api/chat/clear', (req, res) => {
+      try {
+        this.ctx.db._run('DELETE FROM chat_messages');
+      } catch (e) {}
+      this._broadcast('chat.cleared', {});
+      this.ctx.logger && this.ctx.logger.info('chat', '会话记录已清空', { ip: this.ctx.clientIp(req) });
+      res.json({ ok: true });
+    });
+
     // 聊天历史
     app.get('/api/chat/history', (req, res) => {
       const before = req.query.before ? Number(req.query.before) : null;
@@ -345,6 +355,12 @@ class ChatManager {
         this._broadcast('chat.recall', { id }, { bridge: false });
         break;
       }
+      case 'chat.cleared':
+        try {
+          this.ctx.db._run('DELETE FROM chat_messages');
+        } catch (e) {}
+        this._broadcast('chat.cleared', {}, { bridge: false });
+        break;
       case 'clip.sync':
         // 通知本机桌面端写入系统剪贴板 + 通知本机网页端展示
         this.ctx.emit('clip-incoming', { ...payload, origin });
