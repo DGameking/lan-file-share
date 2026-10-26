@@ -1,0 +1,61 @@
+{
+  "name": "lan-file-share",
+  "version": "1.1.0",
+  "description": "局域网多端跨系统文件共享平台 - 桌面客户端 (MVP)",
+  "main": "main/index.js",
+  "author": "WorkBuddy Team",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "server": "node server/index.js",
+    "copy-vendor": "node scripts/copy-vendor.js",
+    "postinstall": "node scripts/copy-vendor.js",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "test": "node test/smoke.js"
+  },
+  "dependencies": {
+    "archiver": "^6.0.1",
+    "bonjour": "^3.5.0",
+    "busboy": "^1.6.0",
+    "express": "^4.19.2",
+    "qrcode": "^1.5.4",
+    "sql.js": "^1.10.3",
+    "uuid": "^9.0.1",
+    "vue": "^3.4.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.0"
+  },
+  "build": {
+    "appId": "com.workbuddy.lanfileshare",
+    "productName": "局域网文件共享",
+    "files": [
+      "main/**/*",
+      "server/**/*",
+      "discovery/**/*",
+      "security/**/*",
+      "database/**/*",
+      "shared/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "extraResources": [],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "win": {
+      "target": "nsis",
+      "signAndEditExecutable": false,
+      "sign": "./scripts/noop-sign.js"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.utilities"
+    }
+  }
+}

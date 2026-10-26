@@ -1,0 +1,53 @@
+#!/bin/bash
+# 局域网文件共享 — 启动 / 停止 / 状态
+PID_FILE="${TRIM_PKGVAR}/app.pid"
+LOG_FILE="${TRIM_PKGVAR}/info.log"
+
+# Node.js 运行时（manifest 中声明 install_dep_apps=nodejs_v22）
+if [ -d "/var/apps/nodejs_v22/target/bin" ]; then
+  export PATH="/var/apps/nodejs_v22/target/bin:$PATH"
+fi
+
+# 数据目录与会话文件目录（received 为用户可见共享目录）
+export LFS_DATA_DIR="${TRIM_PKGVAR}/data"
+if [ -n "${TRIM_DATA_SHARE_PATHS}" ]; then
+  export LFS_CHAT_FILES="${TRIM_DATA_SHARE_PATHS%%:*}"
+fi
+export LFS_PORT="${TRIM_SERVICE_PORT:-18180}"
+
+is_running() {
+  [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+}
+
+case "$1" in
+  start)
+    if is_running; then
+      exit 0
+    fi
+    cd "${TRIM_APPDEST}/target" || exit 1
+    nohup node server/index.js >> "$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
+    sleep 1
+    if is_running; then
+      exit 0
+    fi
+    echo "$(date '+%Y-%m-%d %H:%M:%S') start failed, see ${LOG_FILE}" >> "${TRIM_TEMP_LOGFILE:-/dev/null}"
+    exit 1
+    ;;
+  stop)
+    if [ -f "$PID_FILE" ]; then
+      kill "$(cat "$PID_FILE")" 2>/dev/null
+      rm -f "$PID_FILE"
+    fi
+    exit 0
+    ;;
+  status)
+    if is_running; then
+      exit 0
+    fi
+    exit 3
+    ;;
+  *)
+    exit 1
+    ;;
+esac

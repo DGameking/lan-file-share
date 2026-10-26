@@ -1,0 +1,13 @@
+{
+  ".url": {
+    "LanFileShare.Application": {
+      "title": "局域网文件共享",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "http",
+      "port": "18180",
+      "url": "/",
+      "allUsers": true
+    }
+  }
+}

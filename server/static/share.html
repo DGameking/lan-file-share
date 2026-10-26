@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>局域网文件共享</title>
+    <style>
+      :root {
+        --bg: #0f1115; --panel: #1a1d24; --line: #2a2e38; --text: #e6e8ec; --muted: #9aa0aa;
+        --accent: #4f8cff; --green: #36c275; --red: #ff5d5d;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: var(--bg); color: var(--text); min-height: 100vh; }
+      header { padding: 16px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+      header h1 { font-size: 18px; margin: 0; }
+      .crumb { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
+      .crumb a { color: var(--accent); cursor: pointer; text-decoration: none; }
+      .toolbar { display: flex; gap: 8px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+      button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+        padding: 7px 12px; cursor: pointer; font-size: 13px; }
+      button:hover { border-color: var(--accent); }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      main { padding: 16px 20px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); font-size: 14px; }
+      th { color: var(--muted); font-weight: 500; }
+      tr.row:hover { background: #20242d; }
+      .icon { width: 22px; display: inline-block; text-align: center; }
+      .name { cursor: pointer; }
+      .name:hover { color: var(--accent); }
+      .bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+      .upload { border: 1.5px dashed var(--line); border-radius: 10px; padding: 14px; color: var(--muted); text-align: center; margin-bottom: 14px; }
+      .upload.drag { border-color: var(--accent); color: var(--text); }
+      .modal { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 50; }
+      .modal.open { display: flex; }
+      .modal .box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; max-width: 92vw; max-height: 90vh; overflow: auto; padding: 16px; }
+      .modal .box img, .modal .box video, .modal .box audio { max-width: 80vw; max-height: 70vh; display: block; }
+      .modal .box pre { white-space: pre-wrap; max-height: 70vh; overflow: auto; font-size: 13px; }
+      .close { float: right; }
+      .pwd-mask { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none; align-items: center; justify-content: center; z-index: 60; }
+      .pwd-mask.open { display: flex; }
+      .pwd-box { background: var(--panel); padding: 24px; border-radius: 12px; border: 1px solid var(--line); width: 320px; }
+      .pwd-box input { width: 100%; padding: 9px; margin: 10px 0; border-radius: 8px; border: 1px solid var(--line); background: #11141a; color: var(--text); }
+      .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel);
+        border: 1px solid var(--line); padding: 10px 16px; border-radius: 10px; font-size: 13px; opacity: 0; transition: .3s; z-index: 70; }
+      .toast.show { opacity: 1; }
+      .muted { color: var(--muted); font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1 id="title">📁 共享</h1>
+      <div class="crumb" id="crumb"></div>
+      <div class="toolbar">
+        <button id="refresh">刷新</button>
+        <button id="downloadZip" class="primary">批量下载</button>
+        <button id="uploadBtn">上传</button>
+      </div>
+    </header>
+    <main>
+      <div class="upload" id="drop">把文件拖到这里，或点击“上传”选择文件 / 文件夹</div>
+      <input type="file" id="fileInput" multiple style="display:none" />
+      <input type="file" id="folderInput" webkitdirectory directory multiple style="display:none" />
+      <div class="bar">
+        <span class="muted" id="count"></span>
+      </div>
+      <table>
+        <thead>
+          <tr><th style="width:32px"><input type="checkbox" id="selAll" /></th><th>名称</th><th>大小</th><th>修改时间</th><th>类型</th></tr>
+        </thead>
+        <tbody id="list"></tbody>
+      </table>
+    </main>
+
+    <div class="modal" id="modal"><div class="box"><button class="close" id="modalClose">✕</button><div id="modalBody"></div></div></div>
+    <div class="pwd-mask" id="pwdMask">
+      <div class="pwd-box">
+        <h3 style="margin-top:0">需要访问密码</h3>
+        <input type="password" id="pwdInput" placeholder="请输入密码" />
+        <button class="primary" id="pwdOk" style="width:100%">确定</button>
+      </div>
+    </div>
+    <div class="toast" id="toast"></div>
+
+    <script>
+      const SHARE_ID = '__SHARE_ID__';
+      let curPath = '';
+      let pwd = '';
+      let needPwd = false;
+
+      const $ = (s) => document.querySelector(s);
+      const api = (p, q) => `/s/${SHARE_ID}/api/${p}?path=${encodeURIComponent(q || '')}${pwd ? '&pwd=' + encodeURIComponent(pwd) : ''}`;
+
+      function toast(msg) {
+        const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2000);
+      }
+
+      const ICONS = { dir: '📂', image: '🖼️', video: '🎬', audio: '🎵', pdf: '📕', text: '📝', code: '💻', office: '📊', other: '📄' };
+      function fmtSize(b) { if (b == null) return '—'; const u = ['B','KB','MB','GB']; let i=0; while(b>=1024&&i<u.length-1){b/=1024;i++;} return (i?b.toFixed(1):b)+' '+u[i]; }
+      function fmtTime(ts) { if(!ts) return ''; const d=new Date(ts); return d.toLocaleString(); }
+
+      async function load() {
+        const url = api('list', curPath);
+        const res = await fetch(url);
+        if (res.status === 401) { needPwd = true; $('#pwdMask').classList.add('open'); return; }
+        if (!res.ok) { toast('加载失败'); return; }
+        const data = await res.json();
+        $('#title').textContent = '📁 ' + (data.shareName || '共享');
+        renderCrumb();
+        const tb = $('#list'); tb.innerHTML = '';
+        (data.entries || []).forEach((e) => {
+          const tr = document.createElement('tr'); tr.className = 'row';
+          tr.innerHTML = `<td><input type="checkbox" class="sel" value="${encodeURIComponent(e.name)}"></td>
+            <td class="name" data-name="${encodeURIComponent(e.name)}" data-type="${e.type}">
+              <span class="icon">${ICONS[e.category] || '📄'}</span> ${e.name}</td>
+            <td>${fmtSize(e.size)}</td><td>${fmtTime(e.modified)}</td><td>${e.type==='dir'?'文件夹':(e.category||'')}</td>`;
+          tb.appendChild(tr);
+        });
+        $('#count').textContent = `共 ${(data.entries||[]).length} 项`;
+        tb.querySelectorAll('.name').forEach((el) => {
+          el.onclick = () => {
+            const name = decodeURIComponent(el.dataset.name);
+            if (el.dataset.type === 'dir') { curPath = curPath ? curPath + '/' + name : name; load(); }
+            else openPreview(curPath ? curPath + '/' + name : name, el.dataset.type);
+          };
+        });
+      }
+
+      function renderCrumb() {
+        const parts = curPath ? curPath.split('/') : [];
+        let html = `<a data-p="">根目录</a>`;
+        let acc = '';
+        parts.forEach((p) => { acc += (acc ? '/' : '') + p; html += ` / <a data-p="${encodeURIComponent(acc)}">${p}</a>`; });
+        $('#crumb').innerHTML = html;
+        $('#crumb').querySelectorAll('a').forEach((a) => a.onclick = () => { curPath = decodeURIComponent(a.dataset.p); load(); });
+      }
+
+      async function openPreview(rel, type) {
+        const modal = $('#modal'); modal.classList.add('open');
+        const body = $('#modalBody'); body.innerHTML = '加载中…';
+        if (type === 'image') body.innerHTML = `<img src="${api('download', rel)}&inline=1">`;
+        else if (type === 'video') body.innerHTML = `<video src="${api('download', rel)}&inline=1" controls autoplay></video>`;
+        else if (type === 'audio') body.innerHTML = `<audio src="${api('download', rel)}&inline=1" controls autoplay></audio>`;
+        else if (type === 'pdf') body.innerHTML = `<iframe src="${api('download', rel)}&inline=1" style="width:80vw;height:70vh;border:0"></iframe>`;
+        else if (type === 'text' || type === 'code') {
+          const r = await fetch(api('preview', rel));
+          const d = await r.json();
+          body.innerHTML = `<pre>${escapeHtml(d.content || '(空文件)')}</pre>`;
+        } else {
+          body.innerHTML = `<p>该类型不支持在线预览。</p><a href="${api('download', rel)}"><button class="primary">下载文件</button></a>`;
+        }
+      }
+      function escapeHtml(s){return (s||'').replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));}
+
+      $('#modalClose').onclick = () => $('#modal').classList.remove('open');
+      $('#refresh').onclick = load;
+      $('#selAll').onchange = (e) => document.querySelectorAll('.sel').forEach((c)=>c.checked=e.target.checked);
+      $('#downloadZip').onclick = () => {
+        const sel = [...document.querySelectorAll('.sel:checked')].map((c)=>decodeURIComponent(c.value));
+        if (!sel.length) return toast('请先选择文件');
+        window.location.href = `/s/${SHARE_ID}/api/zip?paths=${sel.map(encodeURIComponent).join(',')}${pwd?'&pwd='+encodeURIComponent(pwd):''}`;
+      };
+
+      const doUpload = (files) => {
+        const fd = new FormData();
+        for (const f of files) fd.append(f.name, f);
+        fetch(`/s/${SHARE_ID}/api/upload?path=${encodeURIComponent(curPath)}${pwd?'&pwd='+encodeURIComponent(pwd):''}`, { method:'POST', body: fd })
+          .then(r=>r.json()).then(d=>{ toast(d.ok?'上传成功':'上传失败'); load(); }).catch(()=>toast('上传失败'));
+      };
+      $('#uploadBtn').onclick = () => $('#fileInput').click();
+      $('#fileInput').onchange = (e) => doUpload(e.target.files);
+      const drop = $('#drop');
+      drop.onclick = () => $('#fileInput').click();
+      ['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag');}));
+      ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag');}));
+      drop.addEventListener('drop', (e)=> doUpload(e.dataTransfer.files));
+
+      $('#pwdOk').onclick = () => { pwd = $('#pwdInput').value; $('#pwdMask').classList.remove('open'); load(); };
+      $('#pwdInput').onkeydown = (e)=>{ if(e.key==='Enter') $('#pwdOk').click(); };
+
+      load();
+    </script>
+  </body>
+</html>

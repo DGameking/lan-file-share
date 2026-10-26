@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>局域网会话</title>
+<style>
+:root{
+  --bg:#f3f5f9;--panel:#ffffff;--line:#e4e8f0;--txt:#1f2937;--muted:#6b7280;
+  --accent:#2563eb;--accent-soft:#eff6ff;--bubble-me:#2563eb;--bubble-other:#ffffff;
+  --ok:#16a34a;--warn:#dc2626;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--txt);overflow:hidden}
+#app{display:flex;height:100vh}
+/* 侧栏 */
+.side{width:230px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;flex-shrink:0}
+.side h2{font-size:14px;padding:14px 16px 10px;color:var(--muted);font-weight:600}
+.members{flex:1;overflow-y:auto;padding:0 8px 8px}
+.member{display:flex;align-items:center;gap:10px;padding:8px;border-radius:10px}
+.member:hover{background:var(--accent-soft)}
+.avatar{width:34px;height:34px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;flex-shrink:0}
+.avatar.me{background:#7c3aed}
+.m-info{min-width:0}
+.m-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.m-kind{font-size:11px;color:var(--muted)}
+.myname{padding:10px 12px;border-top:1px solid var(--line);display:flex;gap:6px;align-items:center}
+.myname input{flex:1;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12px}
+/* 主区 */
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.header{background:var(--panel);border-bottom:1px solid var(--line);padding:10px 18px;display:flex;align-items:center;gap:12px}
+.header .t{font-size:15px;font-weight:700}
+.header .sub{font-size:12px;color:var(--muted)}
+.header .sp{flex:1}
+.btn{border:none;border-radius:10px;padding:8px 14px;font-size:13px;cursor:pointer;background:var(--accent);color:#fff}
+.btn:hover{filter:brightness(1.08)}
+.btn.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
+.btn.danger{background:var(--warn)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+/* 消息区 */
+.msgs{flex:1;overflow-y:auto;padding:18px 22px;display:flex;flex-direction:column;gap:4px}
+.day{align-self:center;font-size:11px;color:var(--muted);background:#e8ecf3;border-radius:10px;padding:2px 10px;margin:10px 0}
+.row-m{display:flex;gap:10px;margin-top:8px;align-items:flex-end}
+.row-m.me{flex-direction:row-reverse}
+.bubble{max-width:min(560px,72%);padding:8px 12px;border-radius:14px;font-size:14px;line-height:1.55;word-break:break-word;white-space:pre-wrap}
+.row-me .bubble{background:var(--bubble-me);color:#fff;border-bottom-right-radius:4px}
+.row-other .bubble{background:var(--bubble-other);border:1px solid var(--line);border-bottom-left-radius:4px}
+.m-head{font-size:11px;color:var(--muted);margin-bottom:2px}
+.row-me .m-head{text-align:right}
+.sysmsg{align-self:center;font-size:12px;color:var(--muted);margin:6px 0}
+.file-card{display:flex;gap:10px;align-items:center;background:rgba(255,255,255,.12);border-radius:10px;padding:8px;margin-top:6px;text-decoration:none;color:inherit}
+.row-other .file-card{background:var(--accent-soft);border:1px solid var(--line)}
+.f-ic{font-size:22px}
+.f-name{font-size:13px;font-weight:600;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.f-size{font-size:11px;opacity:.75}
+.img-prev{max-width:260px;max-height:200px;border-radius:10px;display:block;margin-top:4px;cursor:pointer}
+.typing{font-size:12px;color:var(--muted);height:18px;padding:0 22px 4px}
+/* 输入区 */
+.composer{background:var(--panel);border-top:1px solid var(--line);padding:10px 14px;display:flex;flex-direction:column;gap:8px}
+.pending{display:flex;gap:6px;flex-wrap:wrap}
+.pending .chip{font-size:12px;background:var(--accent-soft);border:1px solid var(--line);border-radius:8px;padding:4px 8px;display:flex;gap:6px;align-items:center}
+.chip b{font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip span{cursor:pointer;color:var(--muted)}
+.c-row{display:flex;gap:8px;align-items:flex-end}
+.c-row textarea{flex:1;border:1px solid var(--line);border-radius:12px;padding:9px 12px;font-size:14px;font-family:inherit;resize:none;max-height:120px;outline:none}
+.c-row textarea:focus{border-color:var(--accent)}
+.icon-btn{width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:#fff;font-size:17px;cursor:pointer;flex-shrink:0}
+.icon-btn:hover{background:var(--accent-soft)}
+/* 通话层 */
+.callbar{position:fixed;top:0;left:0;right:0;z-index:50;background:rgba(17,24,39,.92);color:#fff;padding:10px 18px;display:flex;align-items:center;gap:14px}
+.callbar .who{font-size:14px;font-weight:600}
+.callbar .st{font-size:12px;opacity:.75}
+.videos{position:fixed;inset:0;z-index:40;background:#0b1220;display:none;flex-direction:column}
+.videos.on{display:flex}
+.vgrid{flex:1;display:flex;flex-wrap:wrap;gap:8px;padding:56px 12px 12px;overflow:auto}
+.vtile{position:relative;flex:1 1 320px;min-height:200px;background:#111827;border-radius:12px;overflow:hidden}
+.vtile video{width:100%;height:100%;object-fit:cover}
+.vtile .tag{position:absolute;left:10px;bottom:8px;font-size:12px;background:rgba(0,0,0,.55);padding:3px 8px;border-radius:6px}
+.vtile.aud{display:flex;align-items:center;justify-content:center;font-size:40px}
+.callctl{display:flex;gap:12px;justify-content:center;padding:14px;background:#0b1220}
+/* 响应式 */
+@media (max-width:640px){
+  .side{display:none}
+  .bubble{max-width:84%}
+}
+.modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:60;display:flex;align-items:center;justify-content:center}
+.modal{background:#fff;border-radius:14px;padding:22px;max-width:92vw;max-height:88vh;overflow:auto;text-align:center}
+.modal img{max-width:80vw;max-height:75vh}
+</style>
+</head>
+<body>
+<div id="app">
+  <aside class="side">
+    <h2>会话成员（<span id="mCount">1</span>）</h2>
+    <div class="members" id="members"></div>
+    <div class="myname">
+      <input id="nameInput" maxlength="20" placeholder="我的名称" />
+    </div>
+  </aside>
+  <div class="main">
+    <div class="header">
+      <div>
+        <div class="t">局域网会话</div>
+        <div class="sub" id="subInfo">连接中…</div>
+      </div>
+      <span class="sp"></span>
+      <button class="btn ghost" id="btnAudio">🎙 语音通话</button>
+      <button class="btn ghost" id="btnVideo">📹 视频通话</button>
+      <button class="btn danger" id="btnHangup" style="display:none">挂断</button>
+    </div>
+    <div class="msgs" id="msgs"></div>
+    <div class="typing" id="typing"></div>
+    <div class="composer">
+      <div class="pending" id="pending"></div>
+      <div class="c-row">
+        <button class="icon-btn" id="btnFile" title="发送文件">📎</button>
+        <button class="icon-btn" id="btnFolder" title="发送文件夹">🗂</button>
+        <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+        <button class="btn" id="btnSend">发送</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="callbar" id="callbar" style="display:none">
+  <span class="who" id="callWho"></span>
+  <span class="st" id="callState"></span>
+  <span style="flex:1"></span>
+  <span class="st" id="clock">00:00</span>
+</div>
+<div class="videos" id="videos">
+  <div class="vgrid" id="vgrid"></div>
+  <div class="callctl">
+    <button class="btn ghost" id="btnMute" style="color:#fff;border-color:#374151">🎤 麦克风</button>
+    <button class="btn danger" id="btnLeave">挂断通话</button>
+  </div>
+</div>
+<div class="modal-mask" id="imgModal" style="display:none" onclick="this.style.display='none'">
+  <div class="modal"><img id="imgBig" /></div>
+</div>
+
+<script>
+(function(){
+'use strict';
+var $ = function(id){ return document.getElementById(id); };
+var msgsEl=$('msgs'), inputEl=$('input'), membersEl=$('members');
+
+/* ---------- 身份 ---------- */
+var myId = localStorage.getItem('chat_id') || (function(){ var id='u'+Math.random().toString(36).slice(2,10); localStorage.setItem('chat_id',id); return id; })();
+var myName = localStorage.getItem('chat_name') || '';
+if(!myName){
+  myName = '设备' + Math.floor(Math.random()*900+100);
+  localStorage.setItem('chat_name', myName);
+}
+$('nameInput').value = myName;
+$('nameInput').addEventListener('change', function(){
+  myName = this.value.trim() || myName;
+  localStorage.setItem('chat_name', myName);
+  hello();
+});
+
+var ws=null, selfId=myId, members=[], history=[], typingTimers={};
+var pendingFiles=[]; // {fileId,name,size,mime,relPath,previewUrl}
+
+/* ---------- WS ---------- */
+function wsUrl(){
+  var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  return proto + location.host;
+}
+function connect(){
+  ws = new WebSocket(wsUrl());
+  ws.onopen = function(){ hello(); };
+  ws.onmessage = function(e){
+    var m; try{ m = JSON.parse(e.data); }catch(err){ return; }
+    if(m.event==='init'){ $('subInfo').textContent = '已连接 · ' + (m.payload.self ? m.payload.self.deviceName : ''); return; }
+    if(m.event==='chat.init'){
+      selfId = m.payload.selfId;
+      history = m.payload.history || [];
+      renderAll();
+      return;
+    }
+    if(m.event==='chat.members'){ members = m.payload||[]; renderMembers(); return; }
+    if(m.event==='chat.msg'){ history.push(m.payload); renderMsg(m.payload); scrollBottom(); if(m.payload.sender_id!==selfId) notify(m.payload); return; }
+    if(m.event==='chat.recall'){ history = history.filter(function(x){return x.id!==m.payload.id;}); renderAll(); return; }
+    if(m.event==='chat.typing'){ showTyping(m.payload); return; }
+    if(m.event==='rtc.signal'){ rtc.onSignal(m.payload); return; }
+  };
+  ws.onclose = function(){ $('subInfo').textContent='连接断开，3 秒后重连…'; setTimeout(connect,3000); };
+  ws.onerror = function(){ try{ws.close();}catch(e){} };
+}
+function send(o){ if(ws && ws.readyState===1) ws.send(JSON.stringify(o)); }
+function hello(){ send({type:'chat.hello', clientId:myId, name:myName, kind: 'desktop'===localStorage.getItem('chat_kind')?'desktop':'web'}); }
+
+/* ---------- 成员 ---------- */
+function renderMembers(){
+  var seen={}; var list=[];
+  members.forEach(function(m){ if(!seen[m.id]){seen[m.id]=1; list.push(m);} });
+  if(!seen[selfId]) list.push({id:selfId,name:myName+'（我）',kind:'web'});
+  $('mCount').textContent=list.length;
+  membersEl.innerHTML = list.map(function(m){
+    var initial = (m.name||'?').slice(0,1).toUpperCase();
+    return '<div class="member"><div class="avatar'+(m.id===selfId?' me':'')+'">'+initial+'</div>'+
+      '<div class="m-info"><div class="m-name">'+esc(m.name)+(m.id===selfId?'（我）':'')+'</div>'+
+      '<div class="m-kind">'+(m.kind==='desktop'?'桌面客户端':'浏览器 / 移动端')+'</div></div></div>';
+  }).join('');
+}
+
+/* ---------- 消息渲染 ---------- */
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+function fmtSize(n){ if(!n)return '0 B'; var u=['B','KB','MB','GB','TB'],i=0,v=n; while(v>=1024&&i<u.length-1){v/=1024;i++;} return (i?v.toFixed(1):v)+' '+u[i]; }
+function fmtTs(ts){ var d=new Date(ts),p=function(x){return String(x).padStart(2,'0');}; return p(d.getHours())+':'+p(d.getMinutes()); }
+function fmtDay(ts){ var d=new Date(ts); return (d.getMonth()+1)+'月'+d.getDate()+'日'; }
+
+function isImage(mime,name){ return /^image\//.test(mime||'')||/\.(png|jpe?g|gif|webp|bmp)$/i.test(name||''); }
+function isVideo(mime,name){ return /^video\//.test(mime||'')||/\.(mp4|webm)$/i.test(name||''); }
+
+function renderAll(){
+  msgsEl.innerHTML='';
+  var lastDay='';
+  history.forEach(function(r){
+    var day=fmtDay(r.ts);
+    if(day!==lastDay){ lastDay=day; addDay(day); }
+    renderMsg(r,true);
+  });
+  renderMembers();
+  scrollBottom(true);
+}
+function addDay(d){ var el=document.createElement('div'); el.className='day'; el.textContent=d; msgsEl.appendChild(el); }
+
+function fileHtml(f){
+  var prevUrl='/api/chat/preview/'+encodeURIComponent(f.fileId);
+  var icon = isImage(f.mime,f.name)?'🖼':isVideo(f.mime,f.name)?'🎬':/^audio\//.test(f.mime||'')?'🎵':'📦';
+  var h='<a class="file-card" href="/api/chat/file/'+encodeURIComponent(f.fileId)+'" download="'+esc(f.name)+'">'+
+    '<span class="f-ic">'+icon+'</span><span><div class="f-name">'+esc(f.name)+'</div>'+
+    '<div class="f-size">'+fmtSize(f.size)+(f.relPath&&f.relPath!=='false'&&f.relPath.indexOf('/')>=0?' · '+esc(f.relPath.split('/')[0])+'/…':'')+'</div></span></a>';
+  if(isImage(f.mime,f.name)) h+='<img class="img-prev" loading="lazy" src="'+prevUrl+'" onclick="showImg(this.src)" />';
+  if(isVideo(f.mime,f.name)) h+='<video class="img-prev" controls preload="metadata" src="'+prevUrl+'"></video>';
+  if(/^audio\//.test(f.mime||'')) h+='<audio controls style="display:block;margin-top:4px;max-width:280px" src="'+prevUrl+'"></audio>';
+  return h;
+}
+window.showImg=function(src){ $('imgBig').src=src; $('imgModal').style.display='flex'; };
+
+function renderMsg(r,noScroll){
+  var mine = r.sender_id===selfId;
+  var wrap=document.createElement('div');
+  wrap.className='row-m '+(mine?'me':'other');
+  var inner='';
+  if(r.kind==='text'){
+    inner='<div class="bubble">'+esc(r.text)+'</div>';
+  } else if(r.kind==='file'){
+    var files=[]; try{ files=JSON.parse(r.file_meta||'[]'); }catch(e){}
+    inner='<div class="bubble">'+files.map(fileHtml).join('')+'</div>';
+  }
+  wrap.innerHTML='<div class="avatar" style="width:28px;height:28px;font-size:12px;background:'+(mine?'#7c3aed':'#2563eb')+'">'+esc((r.sender_name||'?').slice(0,1).toUpperCase())+'</div>'+
+    '<div style="min-width:0"><div class="m-head">'+esc(r.sender_name)+' · '+fmtTs(r.ts)+'</div>'+inner+'</div>';
+  msgsEl.appendChild(wrap);
+  if(!noScroll) scrollBottom();
+}
+function scrollBottom(force){
+  var nearBottom = msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 120;
+  if(force||nearBottom) msgsEl.scrollTop = msgsEl.scrollHeight;
+}
+function notify(r){
+  try{
+    if(document.hasFocus()) return;
+    if(!Notification || Notification.permission!=='granted') return;
+    new Notification(r.sender_name,{ body: r.kind==='text'? r.text : '[文件] ', tag:r.id });
+  }catch(e){}
+}
+
+/* ---------- 发送文本 ---------- */
+function sendText(){
+  var t=inputEl.value.trim();
+  if(!t) return;
+  inputEl.value=''; inputEl.style.height='auto';
+  send({type:'chat.send', text:t});
+  sendTyping(false);
+}
+$('btnSend').onclick=sendText;
+inputEl.addEventListener('keydown',function(e){
+  if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendText(); }
+});
+inputEl.addEventListener('input',function(){
+  this.style.height='auto'; this.style.height=Math.min(this.scrollHeight,120)+'px';
+  sendTyping(true);
+});
+
+/* ---------- 输入状态 ---------- */
+var typingSentAt=0, typingOffTimer=null;
+function sendTyping(on){
+  var now=Date.now();
+  if(on){ if(now-typingSentAt<2000) return; typingSentAt=now; }
+  send({type:'chat.typing', typing:on});
+  clearTimeout(typingOffTimer);
+  if(on) typingOffTimer=setTimeout(function(){ sendTyping(false); },3000);
+}
+function showTyping(p){
+  if(p.id===selfId) return;
+  $('typing').textContent = p.typing ? (p.name+' 正在输入…') : '';
+  clearTimeout(typingTimers[p.id]);
+  typingTimers[p.id]=setTimeout(function(){ $('typing').textContent=''; },3500);
+}
+
+/* ---------- 文件 / 文件夹 ---------- */
+function addPending(file, relPath){
+  // 小图片立即生成预览
+  pendingFiles.push({file:file, name:file.name, size:file.size, mime:file.type, relPath:relPath||''});
+  renderPending();
+}
+function renderPending(){
+  $('pending').innerHTML = pendingFiles.map(function(f,i){
+    return '<span class="chip"><b>'+esc(f.name)+'</b> '+fmtSize(f.size)+'<span data-i="'+i+'">✕</span></span>';
+  }).join('');
+  Array.prototype.forEach.call($('pending').querySelectorAll('span[data-i]'),function(el){
+    el.onclick=function(){ pendingFiles.splice(Number(el.dataset.i),1); renderPending(); };
+  });
+}
+async function uploadAndSend(list, withRel){
+  if(!list.length) return;
+  var fd=new FormData();
+  for(var i=0;i<list.length;i++){
+    var item=list[i];
+    fd.append('file', item, withRel? (item.webkitRelativePath||item.name) : item.name);
+  }
+  $('btnSend').disabled=true;
+  try{
+    var res=await fetch('/api/chat/upload',{method:'POST',body:fd});
+    var j=await res.json();
+    if(j.ok){
+      var files=j.files.map(function(f,i2){
+        return { fileId:f.fileId, name:f.name, size:f.size, mime:f.mime,
+                 relPath: withRel ? (list[i2].webkitRelativePath||'') : '' };
+      });
+      send({type:'chat.file', files:files});
+    } else { alert('上传失败：'+(j.error||'')); }
+  }catch(e){ alert('上传失败：'+e.message); }
+  $('btnSend').disabled=false;
+}
+$('btnFile').onclick=function(){
+  var inp=document.createElement('input'); inp.type='file'; inp.multiple=true;
+  inp.onchange=function(){ uploadAndSend([].slice.call(inp.files),false); };
+  inp.click();
+};
+$('btnFolder').onclick=function(){
+  var inp=document.createElement('input'); inp.type='file'; inp.multiple=true; inp.webkitdirectory=true;
+  inp.onchange=function(){ uploadAndSend([].slice.call(inp.files),true); };
+  inp.click();
+};
+inputEl.addEventListener('paste',function(e){
+  var items=e.clipboardData && e.clipboardData.items; if(!items) return;
+  var list=[];
+  for(var i=0;i<items.length;i++){
+    if(items[i].kind==='file') list.push(items[i].getAsFile());
+  }
+  if(list.length){ e.preventDefault(); uploadAndSend(list.filter(Boolean),false); }
+});
+
+/* ---------- WebRTC 通话（星型，发起者为中心） ---------- */
+var rtc={
+  inCall:false, media:null, localStream:null, pcs:{}, remoteEls:{}, clockTimer:null, startAt:0,
+  pendingInvite:null,
+  onSignal:function(p){
+    if(p.from===selfId) return;
+    var d=p.data||{};
+    if(d.kind==='invite'){
+      if(this.inCall){ // 忙：直接拒绝
+        send({type:'rtc.signal',to:p.from,data:{kind:'decline',reason:'busy'}});
+        return;
+      }
+      this.pendingInvite={from:p.from,fromName:p.fromName,media:d.media};
+      showCallbar((p.fromName||'对方')+' 邀请你'+(d.media==='video'?'视频':'语音')+'通话', true);
+      return;
+    }
+    if(d.kind==='accept'){
+      var pc=this.pcs[p.from];
+      if(pc) this.setupPc(pc,p.from);
+      return;
+    }
+    if(d.kind==='decline'){
+      appendSys((this.nameOf(p.from)||'对方')+' 已拒绝或正忙');
+      this.closePeer(p.from);
+      if(!Object.keys(this.pcs).length) this.leave();
+      return;
+    }
+    if(d.kind==='bye'){ this.closePeer(p.from); if(!Object.keys(this.pcs).length&&this.inCall) this.leave(); return; }
+    var pc2=this.pcs[p.from];
+    if(!pc2) return;
+    if(d.kind==='offer'){ pc2.setRemoteDescription(new RTCSessionDescription(d.sdp)).then(function(){ return pc2.createAnswer(); }).then(function(a){ return pc2.setLocalDescription(a); }).then(function(){ send({type:'rtc.signal',to:p.from,data:{kind:'answer',sdp:pc2.localDescription}}); }).catch(function(){}); }
+    else if(d.kind==='answer'){ pc2.setRemoteDescription(new RTCSessionDescription(d.sdp)).catch(function(){}); }
+    else if(d.kind==='ice'){ try{ pc2.addIceCandidate(new RTCIceCandidate(d.candidate)); }catch(e){} }
+  },
+  nameOf:function(id){ var m=members.filter(function(x){return x.id===id;})[0]; return m?m.name:id; },
+  start:function(media){
+    if(this.inCall) return;
+    var others=members.filter(function(m){return m.id!==selfId;});
+    if(!others.length){ alert('当前没有其他在线成员'); return; }
+    var self=this;
+    navigator.mediaDevices.getUserMedia({audio:true, video: media==='video' ? {width:{ideal:1280}} : false}).then(function(stream){
+      self.inCall=true; self.media=media; self.localStream=stream;
+      $('videos').classList.add('on');
+      addVideoTile(selfId, myName+'（我）', stream, media==='video');
+      self.startAt=Date.now();
+      $('callbar').style.display='flex';
+      showCallbar('通话中', false, true);
+      self.clockTimer=setInterval(function(){
+        var s=Math.floor((Date.now()-self.startAt)/1000);
+        $('clock').textContent=String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+      },1000);
+      others.forEach(function(m){
+        var pc=new RTCPeerConnection({iceServers:[]}); // 纯局域网，无需 STUN
+        self.pcs[m.id]=pc;
+        stream.getTracks().forEach(function(t){ pc.addTrack(t,stream); });
+        pc.onicecandidate=function(e){ if(e.candidate) send({type:'rtc.signal',to:m.id,data:{kind:'ice',candidate:e.candidate}}); };
+        pc.ontrack=function(e){ addVideoTile(m.id, self.nameOf(m.id), e.streams[0], media==='video'); };
+        pc.createOffer().then(function(o){ return pc.setLocalDescription(o); }).then(function(){
+          send({type:'rtc.signal',to:m.id,data:{kind:'invite',media:media}});
+        }).catch(function(){});
+      });
+      appendSys('已发起'+(media==='video'?'视频':'语音')+'通话（'+others.length+' 人）');
+    }).catch(function(e){ alert('无法获取麦克风/摄像头：'+e.message); });
+  },
+  setupPc:function(pc,toId){
+    var self=this;
+    pc.onicecandidate=function(e){ if(e.candidate) send({type:'rtc.signal',to:toId,data:{kind:'ice',candidate:e.candidate}}); };
+    pc.ontrack=function(e){ addVideoTile(toId, self.nameOf(toId), e.streams[0], self.media==='video'); };
+    pc.createOffer().then(function(o){ return pc.setLocalDescription(o); }).then(function(){
+      send({type:'rtc.signal',to:toId,data:{kind:'offer',sdp:pc.localDescription}});
+    }).catch(function(){});
+  },
+  accept:function(){
+    if(!this.pendingInvite) return;
+    var self=this, inv=this.pendingInvite; this.pendingInvite=null;
+    navigator.mediaDevices.getUserMedia({audio:true, video: inv.media==='video' ? {width:{ideal:1280}} : false}).then(function(stream){
+      self.inCall=true; self.media=inv.media; self.localStream=stream;
+      $('videos').classList.add('on');
+      addVideoTile(selfId, myName+'（我）', stream, inv.media==='video');
+      self.startAt=Date.now();
+      showCallbar('通话中', false, true);
+      self.clockTimer=setInterval(function(){
+        var s=Math.floor((Date.now()-self.startAt)/1000);
+        $('clock').textContent=String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+      },1000);
+      var pc=new RTCPeerConnection({iceServers:[]});
+      self.pcs[inv.from]=pc;
+      stream.getTracks().forEach(function(t){ pc.addTrack(t,stream); });
+      pc.ontrack=function(e){ addVideoTile(inv.from, self.nameOf(inv.from), e.streams[0], inv.media==='video'); };
+      send({type:'rtc.signal',to:inv.from,data:{kind:'accept'}});
+      appendSys('已加入通话');
+    }).catch(function(e){ alert('无法获取麦克风/摄像头：'+e.message); self.decline(); });
+  },
+  decline:function(){
+    if(!this.pendingInvite) return;
+    send({type:'rtc.signal',to:this.pendingInvite.from,data:{kind:'decline',reason:'declined'}});
+    this.pendingInvite=null;
+    hideCallbar();
+  },
+  closePeer:function(id){
+    var pc=this.pcs[id];
+    if(pc){ try{pc.close();}catch(e){} delete this.pcs[id]; }
+    if(this.remoteEls[id]){ this.remoteEls[id].remove(); delete this.remoteEls[id]; }
+  },
+  leave:function(){
+    var self=this;
+    Object.keys(this.pcs).forEach(function(id){
+      send({type:'rtc.signal',to:id,data:{kind:'bye'}});
+      self.closePeer(id);
+    });
+    if(this.localStream){ this.localStream.getTracks().forEach(function(t){t.stop();}); this.localStream=null; }
+    this.inCall=false;
+    clearInterval(this.clockTimer);
+    $('videos').classList.remove('on');
+    $('vgrid').innerHTML='';
+    hideCallbar();
+  }
+};
+function showCallbar(text, showActions, hideActions){
+  $('callbar').style.display='flex';
+  $('callWho').textContent=text;
+  var hasInv = !!rtc.pendingInvite;
+  $('callState').innerHTML = hasInv ?
+    '<button class="btn" id="cAcc" style="padding:5px 12px">接听</button> <button class="btn danger" id="cDec" style="padding:5px 12px">拒绝</button>' : '';
+  if(hasInv){
+    $('cAcc').onclick=function(){ rtc.accept(); };
+    $('cDec').onclick=function(){ rtc.decline(); };
+  }
+}
+function hideCallbar(){ $('callbar').style.display='none'; $('callState').innerHTML=''; $('clock').textContent='00:00'; }
+function addVideoTile(id, name, stream, video){
+  var tile=rtc.remoteEls[id];
+  if(tile && tile.dataset.kind==='video' && video) { /* already */ }
+  if(!tile){
+    tile=document.createElement('div');
+    tile.className='vtile'; tile.dataset.kind=video?'video':'audio';
+    if(video){ tile.innerHTML='<video autoplay playsinline muted></video>'; }
+    else { tile.innerHTML='<div style="font-size:44px">🎧</div>'; }
+    tile.innerHTML+='<div class="tag">'+esc(name)+'</div>';
+    $('vgrid').appendChild(tile);
+    rtc.remoteEls[id]=tile;
+  }
+  var v=tile.querySelector('video');
+  if(v){ v.srcObject=stream; if(id===selfId){ v.muted=true; } }
+  else { // 音频模式：挂一个隐藏 audio
+    var a=document.createElement('audio'); a.autoplay=true; a.srcObject=stream;
+    if(id===selfId) a.muted=true;
+    tile.appendChild(a);
+  }
+}
+$('btnAudio').onclick=function(){ rtc.start('audio'); };
+$('btnVideo').onclick=function(){ rtc.start('video'); };
+$('btnHangup').onclick=function(){ rtc.leave(); };
+$('btnLeave').onclick=function(){ rtc.leave(); };
+$('btnMute').onclick=function(){
+  if(!rtc.localStream) return;
+  var track=rtc.localStream.getAudioTracks()[0];
+  if(track){ track.enabled=!track.enabled; this.textContent=track.enabled?'🎤 麦克风':'🔇 已静音'; }
+};
+document.addEventListener('click',function(){ if(Notification && Notification.permission==='default') Notification.requestPermission(); },{once:true});
+
+connect();
+renderMembers();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+data/
+*.db
+tmp-*/
+wcs_fix/
+wcs_fixed.7z
+winCodeSign/
+tools/fnpack.exe
+fnos-app/app/target/node_modules/
+.workbuddy-memory-backup-*.md
+fnos-app/app/target/
