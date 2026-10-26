@@ -32,7 +32,38 @@ async function checkLatest({ current }) {
     url: j.html_url || `https://github.com/${REPO}/releases`,
     notes: String(j.body || '').slice(0, 2000),
     publishedAt: j.published_at || null,
+    assets: (j.assets || []).map((a) => ({ name: a.name, url: a.browser_download_url, size: a.size })),
   };
 }
 
-module.exports = { compareSemver, checkLatest, REPO };
+/** 按发布命名规则匹配当前平台/架构的安装包资产 */
+function assetNameFor(platform, arch, version) {
+  if (platform === 'win32') return `LanFileShare-Setup-${version}-${arch === 'arm64' ? 'arm64' : 'x64'}.exe`;
+  if (platform === 'darwin') return `LanFileShare-${version}-${arch === 'arm64' ? 'arm64' : 'x64'}.dmg`;
+  if (platform === 'linux') return `LanFileShare-${version}-${arch === 'arm64' ? 'arm64' : 'x86_64'}.AppImage`;
+  return null;
+}
+
+/** 从资产列表中找到当前平台的安装包与对应校验和文件 */
+function matchAsset(assets, { platform, arch, version }) {
+  const name = assetNameFor(platform, arch, version);
+  if (!name) return null;
+  const installer = (assets || []).find((a) => a.name === name);
+  if (!installer) return null;
+  let checksumAsset = null;
+  if (platform === 'win32') {
+    checksumAsset = (assets || []).find((a) => a.name === `SHA256SUMS-win-${version}.txt`) || null;
+  }
+  return { installer, checksumAsset };
+}
+
+/** 从 SHA256SUMS 文本中解析指定文件名的哈希 */
+function parseChecksum(text, fileName) {
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const m = line.match(/^([0-9a-fA-F]{64})\s+\*?(.+)$/);
+    if (m && m[2].trim() === fileName) return m[1].toLowerCase();
+  }
+  return null;
+}
+
+module.exports = { compareSemver, checkLatest, matchAsset, parseChecksum, assetNameFor, REPO };

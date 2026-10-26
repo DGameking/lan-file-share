@@ -647,6 +647,109 @@ class LanFileShare extends require('events').EventEmitter {
     }
   }
 
+  /* ---------------- 应用内更新：下载 / 安装 ---------------- */
+
+  /** 下载最新版安装包（支持断点续传，进度经 update.progress 广播） */
+  async downloadUpdate() {
+    if (this._updateDl) return { ok: false, error: 'download_in_progress' };
+    const uc = require('./update-checker');
+    const r = await this.checkUpdate(false); // 强制刷新，拿最新资产列表
+    if (!r.checked || !r.hasUpdate) return { ok: false, error: r.error || 'no_update' };
+    const m = uc.matchAsset(r.assets, { platform: process.platform, arch: process.arch, version: r.latest });
+    if (!m) return { ok: false, error: 'asset_not_found', hint: '该平台暂无对应的发布文件' };
+
+    // Windows：取校验和用于完整性验证
+    let sha = null;
+    if (m.checksumAsset) {
+      try {
+        const cres = await fetch(m.checksumAsset.url, { signal: AbortSignal.timeout(15000) });
+        if (cres.ok) sha = uc.parseChecksum(await cres.text(), m.installer.name);
+      } catch (e) {}
+    }
+
+    const dir = path.join(this.dataDir, 'updates');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {}
+    const file = path.join(dir, m.installer.name);
+    this._updateDl = { abort: new AbortController(), file, asset: m.installer, sha, version: r.latest, received: 0, total: m.installer.size, lastEmit: 0 };
+    this._pumpDownload();
+    return { ok: true, name: m.installer.name, size: m.installer.size, version: r.latest };
+  }
+
+  async _pumpDownload() {
+    const dl = this._updateDl;
+    if (!dl) return;
+    try {
+      let start = 0;
+      if (fs.existsSync(dl.file)) {
+        start = fs.statSync(dl.file).size;
+        if (start > dl.total) { try { fs.unlinkSync(dl.file); } catch (e) {} start = 0; }
+      }
+      dl.received = start;
+      const headers = {};
+      if (start > 0) headers.Range = `bytes=${start}-`;
+      const res = await fetch(dl.asset.url, { headers, redirect: 'follow', signal: dl.abort.signal });
+      if (!res.ok && res.status !== 206) throw new Error('download_http_' + res.status);
+      const stream = fs.createWriteStream(dl.file, { flags: start > 0 ? 'a' : 'w' });
+      const reader = res.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!stream.write(Buffer.from(value))) await new Promise((r) => stream.once('drain', r));
+        dl.received += value.length;
+        const now = Date.now();
+        if (now - dl.lastEmit > 300) {
+          dl.lastEmit = now;
+          this.broadcast('update.progress', { name: dl.asset.name, received: dl.received, total: dl.total, pct: Math.round((dl.received / dl.total) * 100) });
+        }
+      }
+      await new Promise((r) => stream.end(r));
+      // 完整性校验
+      if (dl.sha) {
+        const hash = require('crypto').createHash('sha256');
+        hash.update(fs.readFileSync(dl.file));
+        if (hash.digest('hex') !== dl.sha) {
+          try { fs.unlinkSync(dl.file); } catch (e) {}
+          throw new Error('checksum_mismatch');
+        }
+      }
+      this._updateInfo = { ...(this._updateInfo || {}), downloadedFile: dl.file, downloadedVersion: dl.version };
+      this.broadcast('update.downloaded', { file: dl.file, name: dl.asset.name, version: dl.version, size: dl.total });
+      this.logger && this.logger.info('update', `新版本安装包下载完成：${dl.asset.name}`);
+    } catch (e) {
+      if (dl.aborted || (e && e.name === 'AbortError')) {
+        this.broadcast('update.progress', { aborted: true });
+      } else {
+        this.logger && this.logger.warn('update', '更新包下载失败', e.message);
+        this.broadcast('update.error', { message: e.message });
+      }
+    } finally {
+      this._updateDl = null;
+    }
+  }
+
+  abortUpdate() {
+    if (this._updateDl) {
+      this._updateDl.aborted = true;
+      try { this._updateDl.abort.abort(); } catch (e) {}
+    }
+    return { ok: true };
+  }
+
+  /** 执行已下载的安装包（Windows 静默安装并自动重启；mac/linux 打开安装文件） */
+  installUpdate() {
+    const info = this._updateInfo || {};
+    const file = info.downloadedFile;
+    if (!file || !fs.existsSync(file)) throw new Error('no_downloaded_file');
+    if (process.platform === 'win32') {
+      const { spawn } = require('child_process');
+      const child = spawn(file, ['/S'], { detached: true, stdio: 'ignore', windowsHide: true });
+      child.unref();
+      this.emit('update.install');
+      return { ok: true, mode: 'auto' };
+    }
+    return { ok: true, mode: 'manual', file };
+  }
+
   /* ---------------- 信息 / 统计 ---------------- */
   selfInfo() {
     return {

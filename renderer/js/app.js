@@ -477,6 +477,39 @@
         if (updateInfo.value && updateInfo.value.url) api.invoke('engine:openExternal', updateInfo.value.url);
       }
 
+      // ---- 应用内下载与安装 ----
+      const dl = ref(null); // {starting} | {name,received,total,pct} | {done,version} 
+      async function startDownload() {
+        dl.value = { starting: true };
+        const r = await api.invoke('engine:update:download');
+        if (!r.ok) {
+          dl.value = null;
+          toast('下载失败：' + (r.hint || r.error || ''), 'warn');
+        }
+      }
+      function abortDownload() {
+        api.invoke('engine:update:abort');
+        dl.value = null;
+      }
+      async function installNow() {
+        const r = await api.invoke('engine:update:install');
+        if (r.ok && r.mode === 'manual') toast('已打开安装文件，请手动完成安装', 'ok');
+      }
+      onMounted(() => {
+        api.on('update.progress', (p) => {
+          if (p.aborted) { dl.value = null; return; }
+          dl.value = { name: p.name, received: p.received, total: p.total, pct: p.pct };
+        });
+        api.on('update.downloaded', (p) => {
+          dl.value = { done: true, name: p.name, version: p.version };
+          toast(`v${p.version} 安装包下载完成，可以安装`, 'ok');
+        });
+        api.on('update.error', (p) => {
+          dl.value = null;
+          toast('下载失败：' + (p.message || ''), 'warn');
+        });
+      });
+
       // ---- 服务器模式 ----
       const serverAddr = computed(() => `${store.settings.localIp || store.self.host}:${store.self.port}`);
       async function copyServerAddr() {
@@ -490,7 +523,8 @@
       checkUpdate(true);
 
       return { store, save, onText, onCheck, fps, copy, onHttps, httpsChanged, relaunch, diag, diagRunning, runDiag, openLogsDir,
-               updateInfo, checking, checkUpdate, openUpdateUrl, serverAddr, copyServerAddr, openAdmin };
+               updateInfo, checking, checkUpdate, openUpdateUrl, serverAddr, copyServerAddr, openAdmin,
+               dl, startDownload, abortDownload, installNow };
     },
     template: `
       <div>
@@ -567,9 +601,26 @@
           </div>
           <div v-if="updateInfo && updateInfo.checked && updateInfo.hasUpdate" class="row" style="margin-top:8px;align-items:center">
             <span style="color:var(--ok,#16a34a);font-weight:600">🎉 新版本 v{{ updateInfo.latest }} 可用</span>
-            <button class="btn sm" @click="openUpdateUrl">前往下载</button>
+            <template v-if="!dl">
+              <button class="btn sm" @click="startDownload">⬇ 下载并安装</button>
+              <button class="btn sm ghost" @click="openUpdateUrl">前往网页下载</button>
+            </template>
           </div>
           <div v-else-if="updateInfo && updateInfo.checked" class="muted" style="margin-top:8px">已是最新版本</div>
+          <div v-if="dl && dl.starting" class="muted" style="margin-top:8px">正在获取下载地址…</div>
+          <div v-if="dl && dl.pct != null" style="margin-top:10px">
+            <div class="t-row">
+              <span style="font-size:13px;font-weight:600">{{ dl.name }}</span>
+              <span class="muted">{{ formatBytes(dl.received) }} / {{ formatBytes(dl.total) }}（支持断点续传）</span>
+              <span style="flex:1"></span>
+              <button class="btn ghost sm" @click="abortDownload">取消</button>
+            </div>
+            <div class="t-bar"><div class="t-fill" :style="{ width: dl.pct + '%' }"></div></div>
+          </div>
+          <div v-if="dl && dl.done" class="row" style="margin-top:10px;align-items:center">
+            <span style="color:var(--ok,#16a34a);font-weight:600">✅ v{{ dl.version }} 安装包已就绪</span>
+            <button class="btn" @click="installNow">🔄 安装并重启</button>
+          </div>
           <div class="muted" style="margin-top:6px">版本发布地址：github.com/DGameking/lan-file-share/releases</div>
         </div>
 

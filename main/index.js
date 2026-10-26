@@ -144,6 +144,13 @@ function registerIpc() {
   });
   h('engine:diagnose', async () => require('../server/diagnostics').run(engine));
   h('engine:checkUpdate', (opts) => engine.checkUpdate(!!(opts && opts.auto)));
+  h('engine:update:download', () => engine.downloadUpdate());
+  h('engine:update:abort', () => engine.abortUpdate());
+  h('engine:update:install', () => {
+    const r = engine.installUpdate();
+    if (r.ok && r.mode === 'manual') shell.showItemInFolder(r.file); // mac/linux：定位到安装文件
+    return r;
+  });
   h('engine:openExternal', (url) => {
     if (/^https?:\/\//.test(String(url))) shell.openExternal(String(url));
     return { ok: true };
@@ -343,6 +350,15 @@ async function boot() {
   // 剪贴板同步：本机变化 → 推送给所有设备；其他设备变化 → 写入本机剪贴板
   engine.on('clip-incoming', onIncomingClip);
   startClipboardSync();
+
+  // 应用内更新：安装包已启动（Windows 静默安装）→ 稍候退出本应用，安装器接棒并自动重启
+  engine.on('update.install', () => {
+    setTimeout(() => {
+      willQuit = true;
+      try { globalShortcut.unregisterAll(); } catch (e) {}
+      app.exit(0);
+    }, 800);
+  });
 
   // 引擎设置变化时同步自启动
   engine.on && engine.on('settings', () => applyAutostart());
