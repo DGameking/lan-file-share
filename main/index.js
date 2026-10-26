@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, shell, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu, clipboard, Notification } = require('electron');
 const path = require('path');
 const LanFileShare = require('../server');
 const TrayManager = require('./tray');
@@ -122,6 +122,20 @@ function registerIpc() {
     if (p) shell.openPath(p);
     return { ok: true };
   });
+  ipcMain.handle('engine:openReceivedFolder', async () => {
+    if (engine && engine.receivedDir) shell.openPath(engine.receivedDir);
+    return { ok: true };
+  });
+
+  // 剪贴板（供渲染层读取/写入系统剪贴板）
+  ipcMain.handle('clip:read', () => ({ ok: true, data: clipboard.readText() || '' }));
+  ipcMain.handle('clip:write', (_e, text) => {
+    if (typeof text === 'string' && text) {
+      clipboard.writeText(text);
+      clipState.last = text;
+    }
+    return { ok: true };
+  });
 
   // 窗口控制
   ipcMain.on('win:minimize', () => mainWindow && mainWindow.minimize());
@@ -142,6 +156,43 @@ function applyAutostart() {
   });
 }
 
+/* ---------------- 剪贴板同步 ---------------- */
+const clipState = { last: '', timer: null };
+
+function startClipboardSync() {
+  if (clipState.timer) return;
+  clipState.timer = setInterval(() => {
+    try {
+      if (!engine || !engine.settings || !engine.settings.clipboardSync) return;
+      const text = clipboard.readText();
+      if (!text || text === clipState.last) return;
+      clipState.last = text;
+      engine.clipSync(text);
+    } catch (e) {}
+  }, 1500);
+}
+
+/** 收到其他设备的剪贴板 → 写入本机系统剪贴板并通知 */
+function onIncomingClip(payload) {
+  try {
+    if (!payload || typeof payload.text !== 'string' || !payload.text) return;
+    if (payload.deviceId === (engine && engine.deviceId)) return;
+    clipboard.writeText(payload.text);
+    clipState.last = payload.text;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('engine:clip-incoming', { deviceName: payload.deviceName || '其他设备', text: payload.text });
+    }
+    try {
+      if (Notification.isSupported()) {
+        const n = new Notification({ title: '剪贴板已同步', body: `来自「${payload.deviceName || '其他设备'}」的内容已复制到本机` });
+        n.on('click', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
+        if (mainWindow && mainWindow.isVisible()) return; // 窗口可见时用 toast 即可
+        n.show();
+      }
+    } catch (e) {}
+  } catch (e) {}
+}
+
 async function boot() {
   const dataDir = app.isPackaged
     ? path.join(app.getPath('userData'), 'data')
@@ -152,6 +203,10 @@ async function boot() {
   bridgeEngineEvents();
   registerIpc();
   applyAutostart();
+
+  // 剪贴板同步：本机变化 → 推送给所有设备；其他设备变化 → 写入本机剪贴板
+  engine.on('clip-incoming', onIncomingClip);
+  startClipboardSync();
 
   // 引擎设置变化时同步自启动
   engine.on && engine.on('settings', () => applyAutostart());

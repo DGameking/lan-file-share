@@ -87,6 +87,10 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
 .modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:60;display:flex;align-items:center;justify-content:center}
 .modal{background:#fff;border-radius:14px;padding:22px;max-width:92vw;max-height:88vh;overflow:auto;text-align:center}
 .modal img{max-width:80vw;max-height:75vh}
+/* 拖拽投送遮罩 */
+#dropOverlay{position:fixed;inset:0;z-index:70;background:rgba(37,99,235,.14);backdrop-filter:blur(2px);display:none;align-items:center;justify-content:center;pointer-events:none}
+#dropOverlay.on{display:flex}
+#dropOverlay .box{background:#fff;border:2px dashed var(--accent);border-radius:18px;padding:38px 60px;font-size:17px;font-weight:700;color:var(--accent);box-shadow:0 12px 40px rgba(37,99,235,.25)}
 </style>
 </head>
 <body>
@@ -139,6 +143,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
 <div class="modal-mask" id="imgModal" style="display:none" onclick="this.style.display='none'">
   <div class="modal"><img id="imgBig" /></div>
 </div>
+<div id="dropOverlay"><div class="box">📎 松开发送到会话</div></div>
 
 <script>
 (function(){
@@ -184,6 +189,10 @@ function connect(){
     if(m.event==='chat.msg'){ history.push(m.payload); renderMsg(m.payload); scrollBottom(); if(m.payload.sender_id!==selfId) notify(m.payload); return; }
     if(m.event==='chat.recall'){ history = history.filter(function(x){return x.id!==m.payload.id;}); renderAll(); return; }
     if(m.event==='chat.typing'){ showTyping(m.payload); return; }
+    if(m.event==='clip.sync'){
+      if(m.payload && m.payload.deviceId!==selfId) appendSys('📋 '+(m.payload.deviceName||'某设备')+' 同步了剪贴板');
+      return;
+    }
     if(m.event==='rtc.signal'){ rtc.onSignal(m.payload); return; }
   };
   ws.onclose = function(){ $('subInfo').textContent='连接断开，3 秒后重连…'; setTimeout(connect,3000); };
@@ -229,9 +238,12 @@ function renderAll(){
 function addDay(d){ var el=document.createElement('div'); el.className='day'; el.textContent=d; msgsEl.appendChild(el); }
 
 function fileHtml(f){
-  var prevUrl='/api/chat/preview/'+encodeURIComponent(f.fileId);
+  var isRemote = !!f.url;
+  var base = isRemote ? f.url.replace(/\/api\/chat\/file\/.*$/, '') : '';
+  var fileUrl = isRemote ? f.url : '/api/chat/file/'+encodeURIComponent(f.fileId);
+  var prevUrl = isRemote ? (base+'/api/chat/preview/'+encodeURIComponent(f.fileId)) : '/api/chat/preview/'+encodeURIComponent(f.fileId);
   var icon = isImage(f.mime,f.name)?'🖼':isVideo(f.mime,f.name)?'🎬':/^audio\//.test(f.mime||'')?'🎵':'📦';
-  var h='<a class="file-card" href="/api/chat/file/'+encodeURIComponent(f.fileId)+'" download="'+esc(f.name)+'">'+
+  var h='<a class="file-card" href="'+fileUrl+'" download="'+esc(f.name)+'">'+
     '<span class="f-ic">'+icon+'</span><span><div class="f-name">'+esc(f.name)+'</div>'+
     '<div class="f-size">'+fmtSize(f.size)+(f.relPath&&f.relPath!=='false'&&f.relPath.indexOf('/')>=0?' · '+esc(f.relPath.split('/')[0])+'/…':'')+'</div></span></a>';
   if(isImage(f.mime,f.name)) h+='<img class="img-prev" loading="lazy" src="'+prevUrl+'" onclick="showImg(this.src)" />';
@@ -356,6 +368,26 @@ inputEl.addEventListener('paste',function(e){
   if(list.length){ e.preventDefault(); uploadAndSend(list.filter(Boolean),false); }
 });
 
+/* ---------- 全窗口拖拽发送 ---------- */
+var dragDepth=0, dropTimer=null;
+document.addEventListener('dragenter',function(e){
+  if(!e.dataTransfer || Array.prototype.indexOf.call(e.dataTransfer.types,'Files')===-1) return;
+  e.preventDefault(); dragDepth++;
+  $('dropOverlay').classList.add('on');
+});
+document.addEventListener('dragover',function(e){ e.preventDefault(); });
+document.addEventListener('dragleave',function(e){
+  e.preventDefault(); dragDepth=Math.max(0,dragDepth-1);
+  clearTimeout(dropTimer);
+  dropTimer=setTimeout(function(){ if(dragDepth===0) $('dropOverlay').classList.remove('on'); },80);
+});
+document.addEventListener('drop',function(e){
+  e.preventDefault(); dragDepth=0; clearTimeout(dropTimer);
+  $('dropOverlay').classList.remove('on');
+  var files=e.dataTransfer && e.dataTransfer.files;
+  if(files && files.length) uploadAndSend([].slice.call(files),false);
+});
+
 /* ---------- WebRTC 通话（星型，发起者为中心） ---------- */
 var rtc={
   inCall:false, media:null, localStream:null, pcs:{}, remoteEls:{}, clockTimer:null, startAt:0,
@@ -393,8 +425,9 @@ var rtc={
   nameOf:function(id){ var m=members.filter(function(x){return x.id===id;})[0]; return m?m.name:id; },
   start:function(media){
     if(this.inCall) return;
-    var others=members.filter(function(m){return m.id!==selfId;});
-    if(!others.length){ alert('当前没有其他在线成员'); return; }
+    // 跨设备（@前缀）成员暂不支持通话，仅本机服务内的成员可发起
+    var others=members.filter(function(m){return m.id!==selfId && m.id.indexOf('@')===-1;});
+    if(!others.length){ alert('当前没有其他在线成员（跨设备通话将在后续版本支持）'); return; }
     var self=this;
     navigator.mediaDevices.getUserMedia({audio:true, video: media==='video' ? {width:{ideal:1280}} : false}).then(function(stream){
       self.inCall=true; self.media=media; self.localStream=stream;

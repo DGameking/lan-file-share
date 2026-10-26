@@ -376,6 +376,15 @@
         </div>
 
         <div class="card">
+          <h3>同步与投送</h3>
+          <div class="row">
+            <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.clipboardSync" @change="onCheck($event,'clipboardSync')" /> 跨设备同步剪贴板（复制即同步）</label>
+            <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.autoAcceptDrop" @change="onCheck($event,'autoAcceptDrop')" /> 自动接收其他设备的投送文件</label>
+          </div>
+          <div class="muted" style="margin-top:8px">剪贴板同步仅在桌面客户端之间生效；接收的文件保存在数据目录的 received 文件夹</div>
+        </div>
+
+        <div class="card">
           <h3>启动与托盘</h3>
           <div class="row">
             <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.startup" @change="onCheck($event,'startup')" /> 开机自启动</label>
@@ -455,13 +464,150 @@
     `,
   });
 
+  // ---------------- 投送（一拖一放发文件到指定设备） ----------------
+  const DropView = defineComponent({
+    setup() {
+      const dragDevice = ref(null); // 正被拖拽悬停的设备 id
+      const dragAny = ref(false);
+      const transfers = ref([]); // {key,name,size,pct,to,status}
+      const received = ref([]); // 收到的投送 {from, files, ts}
+      const clipText = ref('');
+      let seq = 0;
+
+      const onlineDevices = computed(() =>
+        store.devices.filter((d) => d.is_online && !d.is_blacklisted && d.device_id !== store.self.deviceId)
+      );
+
+      async function loadClip() {
+        const r = await api.invoke('clip:read');
+        if (r.ok) clipText.value = r.data || '';
+      }
+
+      function sendToDevice(d, files) {
+        for (const f of files) {
+          const t = reactive({ key: ++seq, name: f.name, size: f.size, pct: 0, to: d.device_name, status: 'uploading' });
+          transfers.value.unshift(t);
+          if (transfers.value.length > 30) transfers.value.pop();
+          const xhr = new XMLHttpRequest();
+          const fd = new FormData();
+          fd.append('file', f, f.name);
+          xhr.open('POST', `http://${d.host}:${d.port}/api/drop?from=${encodeURIComponent(store.self.deviceName || '')}`);
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) t.pct = Math.round((e.loaded / e.total) * 100);
+          };
+          xhr.onload = () => {
+            if (xhr.status === 200) { t.status = 'done'; t.pct = 100; toast(`已投送给「${d.device_name}」：${f.name}`, 'ok'); }
+            else t.status = 'error';
+          };
+          xhr.onerror = () => { t.status = 'error'; toast(`投送失败：${f.name}`, 'warn'); };
+          xhr.send(fd);
+        }
+      }
+
+      function onDropDevice(d, e) {
+        e.preventDefault();
+        dragDevice.value = null; dragAny.value = false;
+        const files = [...(e.dataTransfer ? e.dataTransfer.files : [])];
+        if (files.length) sendToDevice(d, files);
+      }
+      function onDragOver(d, e) { e.preventDefault(); dragDevice.value = d.device_id; }
+      function onDragLeave() { dragDevice.value = null; }
+
+      async function sendClip(d) {
+        const r = await api.invoke('clip:read');
+        if (!r.ok || !r.data) return toast('本机剪贴板为空', 'warn');
+        try {
+          const res = await fetch(`http://${d.host}:${d.port}/api/drop`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: r.data, from: store.self.deviceName || '' }),
+          });
+          if (res.ok) toast(`剪贴板已投送给「${d.device_name}」`, 'ok');
+          else toast('投送失败', 'warn');
+        } catch (e) { toast('投送失败: ' + e.message, 'warn'); }
+      }
+
+      async function openReceived() { await api.invoke('engine:openReceivedFolder'); }
+
+      onMounted(() => {
+        loadClip();
+        api.on('drop.incoming', (p) => {
+          received.value.unshift(p);
+          if (received.value.length > 30) received.value.pop();
+          const names = (p.files || []).map((f) => f.name).join('、');
+          toast(`「${p.from}」投送了 ${p.files.length} 个文件：${names}`, 'ok');
+        });
+        api.on('clip-incoming', (p) => toast(`已同步「${p.deviceName}」的剪贴板`, 'ok'));
+      });
+
+      return { store, onlineDevices, dragDevice, dragAny, transfers, received, clipText, onDropDevice, onDragOver, onDragLeave, sendClip, openReceived };
+    },
+    template: `
+      <div>
+        <div class="card drop-card">
+          <h3>🚀 快速投送</h3>
+          <div class="muted" style="margin-bottom:12px">把文件拖到下方设备卡片上即可直接发送，对方立即收到并弹出通知（无需共享文件夹）</div>
+          <div v-if="onlineDevices.length === 0" class="empty">局域网中暂无其他在线设备 — 等待设备自动发现…</div>
+          <div v-else class="device-grid">
+            <div v-for="d in onlineDevices" :key="d.device_id" class="device-card"
+                 :class="{ hover: dragDevice === d.device_id }"
+                 @dragover="onDragOver(d, $event)" @dragleave="onDragLeave" @drop="onDropDevice(d, $event)">
+              <div class="dc-head">
+                <span class="dc-avatar">{{ (d.device_name || '?').slice(0,1).toUpperCase() }}</span>
+                <div class="dc-info">
+                  <div class="dc-name">{{ d.device_name }}</div>
+                  <div class="dc-os">{{ d.os || '-' }} · {{ d.host }}</div>
+                </div>
+                <span class="tag green">在线</span>
+              </div>
+              <div class="dc-actions">
+                <button class="btn sm ghost" @click="sendClip(d)">📋 投送剪贴板</button>
+              </div>
+              <div class="dc-hint">拖放文件到此处发送</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" v-if="transfers.length">
+          <h3>传输记录</h3>
+          <div class="transfer" v-for="t in transfers" :key="t.key">
+            <div class="t-row">
+              <span class="t-name">{{ t.name }}</span>
+              <span class="muted">→ {{ t.to }} · {{ formatBytes(t.size) }}</span>
+              <span style="flex:1"></span>
+              <span class="tag" :class="t.status==='done' ? 'green' : t.status==='error' ? 'red' : 'blue'">
+                {{ t.status==='done' ? '完成' : t.status==='error' ? '失败' : t.pct + '%' }}
+              </span>
+            </div>
+            <div class="t-bar"><div class="t-fill" :class="{ err: t.status==='error' }" :style="{ width: (t.status==='done' ? 100 : t.pct) + '%' }"></div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="row" style="justify-content:space-between">
+            <h3 style="margin:0">📥 收到的投送（{{ received.length }}）</h3>
+            <button class="btn ghost sm" @click="openReceived">打开接收文件夹</button>
+          </div>
+          <div v-if="received.length === 0" class="empty">暂无收到文件 — 其他设备投送的文件会保存在这里</div>
+          <div v-else class="recv-list">
+            <div v-for="(r, i) in received" :key="i" class="recv-item">
+              <span class="tag blue">{{ r.from }}</span>
+              <span v-for="f in r.files" :key="f.fileId" class="recv-file">{{ f.name }} <span class="muted">({{ formatBytes(f.size) }})</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `,
+  });
+
   // ---------------- 根组件 ----------------
   const App = defineComponent({
-    components: { Dashboard, SharesView, DevicesView, SettingsView, LogsView, ChatView },
+    components: { Dashboard, SharesView, DevicesView, SettingsView, LogsView, ChatView, DropView },
     setup() {
       const tab = ref('dashboard');
       const navs = [
         { id: 'dashboard', label: '概览', ic: '🏠' },
+        { id: 'drop', label: '投送', ic: '🚀' },
         { id: 'chat', label: '会话', ic: '💬' },
         { id: 'shares', label: '共享', ic: '📁' },
         { id: 'devices', label: '设备', ic: '🖥️' },
@@ -507,6 +653,7 @@
           </div>
           <div class="content">
             <component :is="tab === 'dashboard' ? 'Dashboard'
+              : tab === 'drop' ? 'DropView'
               : tab === 'chat' ? 'ChatView'
               : tab === 'shares' ? 'SharesView'
               : tab === 'devices' ? 'DevicesView'

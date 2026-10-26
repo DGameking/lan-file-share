@@ -132,3 +132,114 @@ th { color: var(--text-dim); font-weight: 500; }
 .modal .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 .qr { text-align: center; margin: 12px 0; }
 .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+
+/* ---------------- v1.5 UI 细化 ---------------- */
+
+/* 自定义滚动条 */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #2c3442; border-radius: 6px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: #3a4456; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* 侧栏导航：胶囊高亮 + 微动效 */
+.nav-item {
+  transition: background .15s ease, color .15s ease, transform .12s ease;
+  position: relative;
+}
+.nav-item:active { transform: scale(.98); }
+.nav-item.active {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dim) 100%);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(79, 140, 255, .28);
+}
+.nav-item.active .ic { filter: drop-shadow(0 1px 2px rgba(0,0,0,.3)); }
+
+/* 顶栏渐变 + 毛玻璃 */
+.topbar {
+  background: linear-gradient(180deg, #1a2029 0%, var(--bg-soft) 100%);
+  backdrop-filter: blur(8px);
+}
+
+/* 卡片与按钮微动效 */
+.card { transition: border-color .15s ease; }
+.btn { transition: transform .1s ease, filter .12s ease, background .12s ease; }
+.btn:active { transform: scale(.97); }
+
+/* 统计卡：数字强调 */
+.stat { position: relative; overflow: hidden; }
+.stat::before {
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--primary); opacity: .55;
+}
+.stat:nth-child(2)::before { background: var(--green); }
+.stat:nth-child(3)::before { background: var(--yellow); }
+.stat:nth-child(4)::before { background: #a78bfa; }
+.stat .n { background: linear-gradient(90deg, #fff, #c6d4f0); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+
+/* 表格行悬停 */
+tbody tr { transition: background .12s ease; }
+tbody tr:hover { background: rgba(79, 140, 255, .05); }
+
+/* ---------------- 投送页 ---------------- */
+.device-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+}
+.device-card {
+  position: relative;
+  background: var(--bg);
+  border: 1.5px dashed var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease, transform .12s ease;
+  cursor: pointer;
+}
+.device-card:hover { border-color: var(--primary-dim); background: #141924; }
+.device-card.hover {
+  border-color: var(--primary);
+  border-style: solid;
+  background: rgba(79, 140, 255, .1);
+  box-shadow: 0 0 0 3px rgba(79, 140, 255, .18), 0 8px 24px rgba(79, 140, 255, .2);
+  transform: scale(1.02);
+}
+.dc-head { display: flex; align-items: center; gap: 10px; }
+.dc-avatar {
+  width: 40px; height: 40px; border-radius: 12px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, var(--primary), #7c3aed);
+  color: #fff; font-weight: 700; font-size: 17px;
+}
+.dc-info { min-width: 0; flex: 1; }
+.dc-name { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dc-os { font-size: 11px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dc-actions { margin-top: 10px; display: flex; gap: 8px; }
+.dc-hint {
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  font-size: 11px; color: var(--text-dim); text-align: center;
+}
+.device-card.hover .dc-hint { color: var(--primary); font-weight: 600; }
+
+/* 传输进度 */
+.transfer { margin-bottom: 14px; }
+.transfer:last-child { margin-bottom: 0; }
+.t-row { display: flex; align-items: center; gap: 10px; margin-bottom: 5px; }
+.t-name { font-size: 13px; font-weight: 500; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-bar { height: 5px; border-radius: 3px; background: var(--bg); overflow: hidden; }
+.t-fill {
+  height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, var(--primary), #7c9dff);
+  transition: width .2s ease;
+}
+.t-fill.err { background: var(--red); }
+
+/* 收到的投送 */
+.recv-list { display: flex; flex-direction: column; gap: 8px; }
+.recv-item {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px; border-radius: 8px;
+  background: var(--bg); border: 1px solid var(--border); font-size: 12px;
+}
+.recv-file { color: var(--text); }

@@ -64,7 +64,7 @@ class ChatManager {
     app.post('/api/chat/upload', (req, res) => {
       let bb;
       try {
-        bb = busboy({ headers: req.headers });
+        bb = busboy({ headers: req.headers, defParamCharset: 'utf8' });
       } catch (e) {
         return res.status(400).json({ error: 'bad_request' });
       }
@@ -202,11 +202,7 @@ class ChatManager {
       case 'chat.typing': {
         const m = this.members.get(ws);
         if (!m) return true;
-        for (const [peer] of this.members) {
-          if (peer !== ws && peer.readyState === WebSocket.OPEN) {
-            peer.send(JSON.stringify({ event: 'chat.typing', payload: { id: m.id, name: m.name, typing: !!msg.typing } }));
-          }
-        }
+        this._broadcast('chat.typing', { id: m.id, name: m.name, typing: !!msg.typing });
         return true;
       }
 
@@ -253,7 +249,7 @@ class ChatManager {
     } catch (e) {}
   }
 
-  _broadcast(event, payload) {
+  _broadcast(event, payload, opts = {}) {
     const msg = JSON.stringify({ event, payload });
     for (const [peer] of this.members) {
       if (peer.readyState === WebSocket.OPEN) {
@@ -262,11 +258,78 @@ class ChatManager {
         } catch (e) {}
       }
     }
+    // 本机产生的事件同时桥接给其他设备（deliverRemote 分发的不再外发，避免环路）
+    if (opts.bridge !== false && this.ctx.bridge) {
+      this.ctx.bridge.relay(event, payload);
+    }
   }
 
+  _localMembers() {
+    return [...this.members.values()].map((m) => ({ id: m.id, name: m.name, kind: m.kind, deviceId: m.deviceId }));
+  }
+
+  _combinedMembers() {
+    return [...this._localMembers(), ...(this.ctx.bridge ? this.ctx.bridge.remoteMemberList() : [])];
+  }
+
+  /** 成员变化：本机广播合并列表（本地 + 远端），并把本地列表桥接给对端 */
   _broadcastMembers() {
-    const list = [...this.members.values()].map((m) => ({ id: m.id, name: m.name, kind: m.kind, deviceId: m.deviceId }));
-    this._broadcast('chat.members', list);
+    this._broadcast('chat.members', this._combinedMembers(), { bridge: false });
+    if (this.ctx.bridge) this.ctx.bridge.relay('chat.members', this._localMembers());
+  }
+
+  /** 桥接层收到对端事件后调用：只在本机内分发 */
+  deliverRemote(event, payload, origin) {
+    if (!payload || typeof payload !== 'object') return;
+    const tag = String(origin).slice(0, 8);
+    switch (event) {
+      case 'chat.msg': {
+        const rec = {
+          ...payload,
+          id: `${payload.id || shortId()}-${tag}`,
+          sender_id: `${payload.sender_id || 'u'}@${tag}`,
+        };
+        if (rec.kind === 'file' && Array.isArray(rec.files)) {
+          const info = this.ctx.bridge ? this.ctx.bridge.peerInfoOf(origin) : null;
+          const base = info && info.host && info.port ? `http://${info.host}:${info.port}` : '';
+          rec.files = rec.files.map((f) => ({
+            ...f,
+            url: base ? `${base}/api/chat/file/${encodeURIComponent(f.fileId)}` : '',
+          }));
+        }
+        rec.file_meta = rec.files ? JSON.stringify(rec.files) : rec.file_meta || null;
+        this._persist(rec);
+        this._broadcast('chat.msg', rec, { bridge: false });
+        break;
+      }
+      case 'chat.members':
+        if (this.ctx.bridge) this.ctx.bridge.setRemoteMembers(origin, payload);
+        break;
+      case 'chat.typing':
+        this._broadcast('chat.typing', payload, { bridge: false });
+        break;
+      case 'chat.recall': {
+        if (!payload.id) return;
+        const id = `${payload.id}-${tag}`;
+        try {
+          this.ctx.db._run('DELETE FROM chat_messages WHERE id = ?', [id]);
+        } catch (e) {}
+        this._broadcast('chat.recall', { id }, { bridge: false });
+        break;
+      }
+      case 'clip.sync':
+        // 通知本机桌面端写入系统剪贴板 + 通知本机网页端展示
+        this.ctx.emit('clip-incoming', { ...payload, origin });
+        this._broadcast('clip.sync', { ...payload, origin }, { bridge: false });
+        break;
+    }
+  }
+
+  /** 把当前本地成员列表发给指定桥连接（握手后初始同步） */
+  relayMembersTo(ws) {
+    try {
+      ws.send(JSON.stringify({ type: 'bridge.event', event: 'chat.members', payload: this._localMembers(), origin: this.ctx.deviceId }));
+    } catch (e) {}
   }
 
   /** 会话文件缓存超过上限时，按最旧删除 */

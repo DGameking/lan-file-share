@@ -26,6 +26,8 @@ const { createInvite, resolveInvite } = require('../discovery/invite-code');
 
 const { registerApi } = require('./api');
 const ChatManager = require('./chat');
+const BridgeManager = require('./bridge');
+const dropHandler = require('./drop');
 const browseHandler = require('./handlers/browse');
 const downloadHandler = require('./handlers/download');
 const uploadHandler = require('./handlers/upload');
@@ -57,6 +59,8 @@ class LanFileShare extends require('events').EventEmitter {
     this.shares = new Map();
     this.deviceManager = new DeviceManager();
     this.pairing = new PairingManager();
+    this.bridge = null;
+    this.receivedDir = null;
     this.app = null;
     this.server = null;
     this.wss = null;
@@ -133,6 +137,8 @@ class LanFileShare extends require('events').EventEmitter {
         speedLimitDownload: 0,
         defaultPermission: 'read',
         defaultEncrypt: false,
+        clipboardSync: true,
+        autoAcceptDrop: true,
       };
     this.deviceName = this.settings.deviceName || this.deviceName;
 
@@ -166,12 +172,17 @@ class LanFileShare extends require('events').EventEmitter {
   }
 
   _wireDeviceManager() {
-    this.deviceManager.on('online', (d) =>
-      this.logEvent({ event_type: 'device_online', device_id: d.device_id, device_name: d.device_name, ip: d.host, result: 'success' })
-    );
+    // 会话桥：让所有发现的设备自动加入统一会话（跨设备消息联邦）
+    this.bridge = new BridgeManager(this);
+
+    this.deviceManager.on('online', (d) => {
+      this.logEvent({ event_type: 'device_online', device_id: d.device_id, device_name: d.device_name, ip: d.host, result: 'success' });
+      if (this.bridge) this.bridge.peerOnline(d);
+    });
     this.deviceManager.on('offline', (d) => {
       this.logEvent({ event_type: 'device_offline', device_id: d.device_id, device_name: d.device_name, ip: d.host, result: 'success' });
       this.db.setDeviceOnline(d.device_id, false);
+      if (this.bridge) this.bridge.peerOffline(d.device_id);
     });
     this.deviceManager.on('update', (list) => this.broadcast('devices', list));
 
@@ -187,6 +198,15 @@ class LanFileShare extends require('events').EventEmitter {
     app.use(express.json({ limit: '5mb' }));
     app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
+    // 局域网工具：开放跨源访问，桌面端渲染层可直接向其他设备投送文件
+    app.use((req, res, next) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      if (req.method === 'OPTIONS') return res.sendStatus(204);
+      next();
+    });
+
     app.get('/', (req, res) => res.type('html').send(this._rootPageHtml()));
 
     // 管理端（/admin 页面 + /api 管理路由鉴权）—— 必须先于 registerApi 挂载
@@ -195,6 +215,7 @@ class LanFileShare extends require('events').EventEmitter {
     registerApi(this);
     this.chat = new ChatManager(this);
     this.chat.register();
+    dropHandler.register(this);
     browseHandler.register(this);
     downloadHandler.register(this);
     uploadHandler.register(this);
@@ -249,9 +270,17 @@ class LanFileShare extends require('events').EventEmitter {
   }
 
   _onWsMessage(ws, msg) {
+    if (this.bridge && this.bridge._onData(ws, JSON.stringify(msg))) return;
     if (this.chat && this.chat.onMessage(ws, msg)) return;
     if (msg.type === 'trust' && msg.deviceId) this.trustDevice(msg.deviceId, true);
     if (msg.type === 'blacklist' && msg.deviceId) this.blacklistDevice(msg.deviceId, true);
+  }
+
+  /** 本机剪贴板变化 → 同步给所有设备（桥接 + 本机网页端提示） */
+  clipSync(text) {
+    const payload = { deviceId: this.deviceId, deviceName: this.deviceName, text: String(text || '').slice(0, 100000), ts: Date.now() };
+    this.broadcast('clip.sync', payload);
+    if (this.bridge) this.bridge.relay('clip.sync', payload);
   }
 
   _startDiscovery() {
@@ -637,6 +666,7 @@ class LanFileShare extends require('events').EventEmitter {
       clearInterval(this._speedTimer);
       clearInterval(this._pruneTimer);
     } catch (e) {}
+    if (this.bridge) this.bridge.stop();
     if (this.udp) this.udp.stop();
     if (this.mdns) this.mdns.stop();
     if (this.wss) {
