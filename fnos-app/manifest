@@ -1,21 +1,13 @@
-appname=LanFileShare
-version=1.4.0
-display_name=局域网文件共享
-desc=局域网多端文件共享与会话平台：设备自动发现、文件夹共享、统一会话框（聊天 / 文件 / 文件夹 / 音视频通话），数据不出局域网。
-maintainer=WorkBuddy Team
-maintainer_url=https://github.com/workbuddy
-source=thirdparty
-platform=x86
-
-os_min_version=0.9.0
-
-install_dep_apps=nodejs_v22
-
-desktop_uidir=ui
-desktop_applaunchname=LanFileShare.Application
-
-ctl_stop=true
-service_port=18180
-checkport=true
-
-changelog=1.1.0：新增统一会话框（聊天、文件/文件夹共享、WebRTC 音视频通话）；新增飞牛 fnOS 原生应用包。
+appname               = LanFileShare
+version               = 1.8.0
+display_name          = 局域网文件共享
+desc                  = 局域网多端文件共享与会话平台：设备自动发现、文件夹共享、统一会话框（聊天 / 文件 / 文件夹 / 音视频通话），数据不出局域网。
+maintainer            = WorkBuddy Team
+maintainer_url        = https://github.com/workbuddy
+source                = thirdparty
+platform              = x86
+install_dep_apps      = nodejs_v24
+desktop_uidir         = ui
+desktop_applaunchname = LanFileShare.Application
+ctl_stop              = true
+service_port          = 18180

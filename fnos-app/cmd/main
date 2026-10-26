@@ -1,21 +1,44 @@
 #!/bin/bash
 # 局域网文件共享 — 启动 / 停止 / 状态
+set -u
+
+APP_NAME="${TRIM_APPNAME:-LanFileShare}"
+APP_DIR="${TRIM_APPDEST:-/var/apps/${APP_NAME}}"
 PID_FILE="${TRIM_PKGVAR}/app.pid"
 LOG_FILE="${TRIM_PKGVAR}/info.log"
 
-# Node.js：优先用包内自带的运行时（离线自包含，不依赖应用中心）
-NODE_BIN="${TRIM_APPDEST}/target/runtime/node/bin/node"
-if [ ! -x "$NODE_BIN" ]; then
-  if [ -x "/var/apps/nodejs_v22/target/bin/node" ]; then
-    NODE_BIN="/var/apps/nodejs_v22/target/bin/node"
-  else
-    NODE_BIN="node"
-  fi
+# 兼容两种部署布局（参照 fnOS 实测可装应用的写法）：
+#   fnOS 传 TRIM_APPDEST=/volX/@appcenter/<app> → 服务在 ${APP_DIR}/target
+#   旧版/部分版本 TRIM_APPDEST=/var/apps/<app>  → 服务在 ${APP_DIR}/target（target 为软链）
+SRC_DIR=""
+for cand in "${APP_DIR}/target" "${APP_DIR}"; do
+  [ -f "${cand}/server/index.js" ] && SRC_DIR="${cand}" && break
+done
+
+# Node.js 运行时（由 manifest install_dep_apps=nodejs_v24 提供，参照已验证应用的多路径解析）
+NODE_BIN=""
+for cand in \
+  "${APP_DIR}/target/runtime/node/bin/node" \
+  "/var/apps/nodejs_v24/target/bin/node" \
+  "/var/apps/nodejs_v22/target/bin/node"; do
+  [ -x "$cand" ] && NODE_BIN="$cand" && break
+done
+if [ -z "$NODE_BIN" ]; then
+  APP_VOL="$(printf '%s' "${TRIM_PKGVAR:-}" | sed -n 's#^\(/vol[^/]*\)/.*#\1#p')"
+  for vol in "${APP_VOL:-/vol1}" /vol4 /vol3 /vol2 /vol1; do
+    for cand in "${vol}/@appcenter/nodejs_v24/bin/node" "${vol}/@appstore/nodejs_v24/bin/node"; do
+      [ -x "$cand" ] && NODE_BIN="$cand" && break 2
+    done
+  done
 fi
+[ -n "$NODE_BIN" ] || NODE_BIN="$(command -v node || echo /usr/bin/node)"
 
 # 数据目录与会话文件目录（received 为用户可见共享目录）
+if [ -z "${TRIM_PKGVAR:-}" ]; then
+  TRIM_PKGVAR="${APP_DIR}/var"
+fi
 export LFS_DATA_DIR="${TRIM_PKGVAR}/data"
-if [ -n "${TRIM_DATA_SHARE_PATHS}" ]; then
+if [ -n "${TRIM_DATA_SHARE_PATHS:-}" ]; then
   export LFS_CHAT_FILES="${TRIM_DATA_SHARE_PATHS%%:*}"
 fi
 export LFS_PORT="${TRIM_SERVICE_PORT:-18180}"
@@ -29,7 +52,12 @@ case "$1" in
     if is_running; then
       exit 0
     fi
-    cd "${TRIM_APPDEST}/target" || exit 1
+    if [ -z "$SRC_DIR" ]; then
+      echo "server/index.js not found under ${APP_DIR}" > "${TRIM_TEMP_LOGFILE:-/dev/null}" 2>/dev/null || true
+      exit 1
+    fi
+    mkdir -p "${TRIM_PKGVAR}/data"
+    cd "$SRC_DIR" || exit 1
     nohup "$NODE_BIN" server/index.js >> "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     sleep 1
