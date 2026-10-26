@@ -22,6 +22,8 @@ class BridgeManager {
     this.inbound = new Map();
     /** @type {Map<String, Array>} 远端成员表：origin deviceId -> members[] */
     this.remoteMembers = new Map();
+    /** @type {Map<String, {deviceName:String, shares:Array}>} 远端共享目录：origin deviceId -> catalog */
+    this.remoteShares = new Map();
     /** @type {Map<String, {host:String,port:Number}>} 对端地址信息（用于文件直链改写） */
     this.peerInfo = new Map();
     this._retry = new Map();
@@ -50,6 +52,7 @@ class BridgeManager {
       }
     }
     if (this.remoteMembers.delete(id)) this._refreshLocalMembers();
+    if (this.remoteShares.delete(id)) this._pushRemoteShares();
   }
 
   stop() {
@@ -61,6 +64,7 @@ class BridgeManager {
     this.outbound.clear();
     this.inbound.clear();
     this.remoteMembers.clear();
+    this.remoteShares.clear();
   }
 
   /* ---------------- 连接管理 ---------------- */
@@ -100,10 +104,17 @@ class BridgeManager {
         host: this.engine.localIp,
         port: this.engine.httpPort,
       });
-      // 把本机当前成员列表同步给对方
+      // 把本机当前成员列表与共享目录同步给对方
       if (this.engine.chat) this.engine.chat.relayMembersTo(ws);
+      this.relaySharesTo(ws);
     });
-    ws.on('message', (raw) => this._onData(ws, raw));
+    ws.on('message', (raw) => {
+      try {
+        this._onData(ws, raw);
+      } catch (e) {
+        if (this.engine.logger) this.engine.logger.error('bridge', '桥接消息处理异常', String((e && e.stack) || e));
+      }
+    });
     ws.on('close', () => {
       if (this.outbound.get(id) === ws) this.outbound.delete(id);
       if (this.engine.logger) this.engine.logger.info('bridge', `桥接断开（本端发起）`, { peer: id, host: d.host });
@@ -146,10 +157,17 @@ class BridgeManager {
       ws.on('close', () => {
         this.inbound.delete(ws);
         if (this.engine.logger) this.engine.logger.info('bridge', `桥接断开（对端连入）`, { peer: info.deviceId });
-        if (this.remoteMembers.delete(info.deviceId)) this._refreshLocalMembers();
+        let changed = false;
+        if (this.remoteMembers.delete(info.deviceId)) changed = true;
+        if (this.remoteShares.delete(info.deviceId)) changed = true;
+        if (changed) {
+          this._refreshLocalMembers();
+          this._pushRemoteShares();
+        }
       });
-      // 同步本机成员给对方
+      // 同步本机成员与共享目录给对方
       if (this.engine.chat) this.engine.chat.relayMembersTo(ws);
+      this.relaySharesTo(ws);
       return true;
     }
 
@@ -157,6 +175,11 @@ class BridgeManager {
       const origin = String(msg.origin || '');
       if (!origin || origin === this.engine.deviceId) return false;
       const event = String(msg.event || '');
+      // 共享目录：存表并通知本机客户端
+      if (event === 'shares.catalog') {
+        this.setRemoteShares(origin, msg.payload);
+        return true;
+      }
       // 只在本机内分发，绝不转发（无环）
       if (this.engine.chat && ['chat.msg', 'chat.members', 'chat.typing', 'chat.recall', 'clip.sync'].includes(event)) {
         this.engine.chat.deliverRemote(event, msg.payload, origin);
@@ -206,6 +229,38 @@ class BridgeManager {
     const all = [];
     for (const list of this.remoteMembers.values()) all.push(...list);
     return all;
+  }
+
+  /* ---------------- 远端共享目录聚合 ---------------- */
+
+  /** 把本机共享目录发给指定桥连接（握手后初始同步） */
+  relaySharesTo(ws) {
+    if (!this.engine.shareCatalog) return;
+    this._send(ws, { type: 'bridge.event', event: 'shares.catalog', payload: this.engine.shareCatalog(), origin: this.engine.deviceId });
+  }
+
+  /** 收到对端共享目录：存表并通知本机客户端 */
+  setRemoteShares(origin, shares) {
+    if (!Array.isArray(shares)) return;
+    const dev = this.engine.deviceManager.get(origin);
+    this.remoteShares.set(origin, {
+      deviceName: (dev && dev.device_name) || '其他设备',
+      deviceId: origin,
+      shares: shares.slice(0, 100),
+    });
+    this._pushRemoteShares();
+  }
+
+  /** 合并后的远端共享目录列表（供引擎广播给本机客户端） */
+  remoteShareList() {
+    const all = [];
+    for (const entry of this.remoteShares.values()) all.push(entry);
+    return all;
+  }
+
+  /** 向本机所有 WS 客户端广播合并后的远端共享目录 */
+  _pushRemoteShares() {
+    if (this.engine.remoteSharesList) this.engine.broadcast('remote.shares', this.engine.remoteSharesList());
   }
 
   peerInfoOf(deviceId) {

@@ -108,6 +108,28 @@ async function main() {
   const prev = await fetch(`http://127.0.0.1:18201/api/chat/remote/${selfA.deviceId}/${encodeURIComponent(meta.fileId)}?mode=preview`);
   console.log(prev.ok ? '  ✔ 预览代理可用' : `  ✘ 预览代理失败 HTTP ${prev.status}`);
 
+  console.log('== A 添加共享 → B 应自动收到远端共享目录 ==');
+  const addRes = await fetch('http://127.0.0.1:18200/api/shares', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: path.join(BASE, 'tmp-t2', 'a'), name: '测试共享' }),
+  });
+  const addedShare = await addRes.json();
+  console.log('  A 添加共享:', addedShare.id ? '✔ ' + addedShare.name : '✘ ' + JSON.stringify(addedShare));
+  await wait(2000);
+  const rsEvent2 = c2.events.find((m) => m.event === 'remote.shares');
+  const rsEntry = rsEvent2 && (rsEvent2.payload || []).find((e) => e.deviceId === selfA.deviceId);
+  console.log(
+    rsEntry && rsEntry.shares.some((s) => s.name === '测试共享')
+      ? '  ✔ B 收到 A 的远端共享目录（自动刷新生效）'
+      : '  ✘ B 未收到远端共享目录: ' + JSON.stringify(rsEvent2 && rsEvent2.payload)
+  );
+
+  console.log('== 跨设备成员：B 的成员列表应包含 A 的客户端 ==');
+  const members2 = c2.events.filter((m) => m.event === 'chat.members').map((m) => m.payload).pop() || [];
+  const hasRemoteMember = members2.some((m) => m.id.endsWith('@' + selfA.deviceId.slice(0, 8)));
+  console.log(hasRemoteMember ? `  ✔ B 成员列表含 A 的远端成员（共 ${members2.length} 人）` : `  ✘ B 成员列表缺少 A 的远端成员: ${JSON.stringify(members2.map((m) => m.id))}`);
+
   console.log('== 自诊断（实例 B） ==');
   const diag = await (await fetch('http://127.0.0.1:18201/api/admin/diagnose', { method: 'POST' })).json();
   console.log('  诊断结论:', diag.summary);

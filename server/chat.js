@@ -304,6 +304,11 @@ class ChatManager {
     if (this.ctx.bridge) this.ctx.bridge.relay('chat.members', this._localMembers());
   }
 
+  /** 桥接层远端成员/目录变化后调用：向本机客户端重发合并后的成员列表 */
+  refreshMembers() {
+    this._broadcastMembers();
+  }
+
   /** 桥接层收到对端事件后调用：只在本机内分发 */
   deliverRemote(event, payload, origin) {
     if (!payload || typeof payload !== 'object') return;

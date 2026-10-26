@@ -426,6 +426,7 @@ class LanFileShare extends require('events').EventEmitter {
     });
     this.shares.set(id, share);
     this.broadcast('shares', this.listShares());
+    this._relayShareCatalog();
     this.logEvent({ event_type: 'share_start', target: p, result: 'success' });
     this._refreshMdnsSharedCount();
     return this._decorate(share);
@@ -453,6 +454,7 @@ class LanFileShare extends require('events').EventEmitter {
     const saved = this.db.updateShare(id, update);
     this.shares.set(id, saved);
     this.broadcast('shares', this.listShares());
+    this._relayShareCatalog();
     this._refreshMdnsSharedCount();
     return this._decorate(saved);
   }
@@ -461,6 +463,7 @@ class LanFileShare extends require('events').EventEmitter {
     this.db.removeShare(id);
     this.shares.delete(id);
     this.broadcast('shares', this.listShares());
+    this._relayShareCatalog();
     this._refreshMdnsSharedCount();
   }
 
@@ -474,6 +477,24 @@ class LanFileShare extends require('events').EventEmitter {
 
   enabledShareCount() {
     return [...this.shares.values()].filter((s) => s.enabled).length;
+  }
+
+  /** 本机共享目录（对外广播用，不含路径等敏感信息） */
+  shareCatalog() {
+    return this.listShares()
+      .filter((s) => s.enabled)
+      .map((s) => ({ id: s.id, name: s.name, permission: s.permission, hasPassword: s.hasPassword }));
+  }
+
+  /** 共享变化 → 同步给桥接对端 */
+  _relayShareCatalog() {
+    if (this.bridge) this.bridge.relay('shares.catalog', this.shareCatalog());
+  }
+
+  /** 合并的远端共享目录（其他设备广播来的），供本机 UI 展示 / 挂载 */
+  remoteSharesList() {
+    if (!this.bridge) return [];
+    return this.bridge.remoteShareList();
   }
 
   _refreshMdnsSharedCount() {
