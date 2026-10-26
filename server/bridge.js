@@ -92,6 +92,7 @@ class BridgeManager {
     ws._bridgeDir = 'out';
     ws.on('open', () => {
       this.outbound.set(id, ws);
+      if (this.engine.logger) this.engine.logger.info('bridge', `桥接已建立（本端发起）`, { peer: id, host: d.host, port: d.port });
       this._send(ws, {
         type: 'bridge.hello',
         deviceId: this.engine.deviceId,
@@ -105,6 +106,7 @@ class BridgeManager {
     ws.on('message', (raw) => this._onData(ws, raw));
     ws.on('close', () => {
       if (this.outbound.get(id) === ws) this.outbound.delete(id);
+      if (this.engine.logger) this.engine.logger.info('bridge', `桥接断开（本端发起）`, { peer: id, host: d.host });
       if (!this._destroyed) this._scheduleConnect(d, 8000);
     });
     ws.on('error', () => { /* close 会跟随触发 */ });
@@ -140,8 +142,10 @@ class BridgeManager {
       // 对端主动连入
       this.inbound.set(ws, info);
       this.peerInfo.set(info.deviceId, { host: info.host, port: info.port });
+      if (this.engine.logger) this.engine.logger.info('bridge', `桥接已建立（对端连入）`, { peer: info.deviceId, host: info.host, port: info.port });
       ws.on('close', () => {
         this.inbound.delete(ws);
+        if (this.engine.logger) this.engine.logger.info('bridge', `桥接断开（对端连入）`, { peer: info.deviceId });
         if (this.remoteMembers.delete(info.deviceId)) this._refreshLocalMembers();
       });
       // 同步本机成员给对方

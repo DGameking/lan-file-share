@@ -10,6 +10,7 @@ const WebSocket = require('ws');
 
 const DB = require('../database');
 const crypto = require('../security/crypto');
+const Logger = require('./logger');
 const { findAvailablePort, pingHost } = require('../security/firewall');
 const {
   PROTOCOL,
@@ -83,7 +84,14 @@ class LanFileShare extends require('events').EventEmitter {
 
   async init() {
     if (!fs.existsSync(this.dataDir)) fs.mkdirSync(this.dataDir, { recursive: true });
+    // 运行日志：关键链路落盘 + 内存缓冲（管理控制台可远程查看/自诊断）
+    this.logger = new Logger(path.join(this.dataDir, 'logs'));
+    this.logger.info('engine', `启动中 · 版本 ${this.version} · 平台 ${process.platform}/${process.arch} · Node ${process.version}`, {
+      dataDir: this.dataDir,
+      port: this.httpPort,
+    });
     this.db = await DB.create(this.dbPath);
+    this.logger.info('db', '数据库已打开', { path: this.dbPath });
 
     // 主密钥
     let mk = this.db.getConfig('master_key');
@@ -161,6 +169,8 @@ class LanFileShare extends require('events').EventEmitter {
     await this._startHttp();
     this._startDiscovery();
 
+    this.logger.info('engine', `服务已就绪 · http://${this.localIp}:${this.httpPort}${this.useHttps ? '（HTTPS）' : ''} · 设备ID ${this.deviceId}`);
+
     // 速度采样
     this._speedTimer = setInterval(() => {
       this._speed = {
@@ -180,10 +190,12 @@ class LanFileShare extends require('events').EventEmitter {
 
     this.deviceManager.on('online', (d) => {
       this.logEvent({ event_type: 'device_online', device_id: d.device_id, device_name: d.device_name, ip: d.host, result: 'success' });
+      this.logger.info('discovery', `设备上线「${d.device_name}」`, { id: d.device_id, host: d.host, port: d.port, os: d.os, version: d.version });
       if (this.bridge) this.bridge.peerOnline(d);
     });
     this.deviceManager.on('offline', (d) => {
       this.logEvent({ event_type: 'device_offline', device_id: d.device_id, device_name: d.device_name, ip: d.host, result: 'success' });
+      this.logger.info('discovery', `设备离线「${d.device_name}」`, { id: d.device_id, host: d.host });
       this.db.setDeviceOnline(d.device_id, false);
       if (this.bridge) this.bridge.peerOffline(d.device_id);
     });
@@ -234,6 +246,12 @@ class LanFileShare extends require('events').EventEmitter {
     uploadHandler.register(this);
     webdavHandler.register(this);
     zipHandler.register(this);
+
+    // 全局错误兜底：任何未捕获异常都进运行日志（远程排障的关键）
+    app.use((err, req, res, next) => {
+      if (this.logger) this.logger.error('http', `${req.method} ${req.originalUrl} 处理失败`, String((err && err.stack) || err));
+      if (!res.headersSent) res.status(500).json({ error: 'internal_error', message: String(err && err.message) || 'internal_error' });
+    });
   }
 
   async _startHttp() {
@@ -317,8 +335,12 @@ class LanFileShare extends require('events').EventEmitter {
         .then(() => {
           this.udpPort = this.udp.port;
           this.udp.startHeartbeat();
+          this.logger.info('discovery', `UDP 发现已启动`, { port: this.udpPort });
         })
-        .catch((e) => this.emit('warn', 'UDP 发现启动失败: ' + e.message));
+        .catch((e) => {
+          this.logger.error('discovery', 'UDP 发现启动失败', e.message);
+          this.emit('warn', 'UDP 发现启动失败: ' + e.message);
+        });
     }
 
     if (this.settings.mdns) {
@@ -338,7 +360,9 @@ class LanFileShare extends require('events').EventEmitter {
           sharedCount: this.enabledShareCount(),
         });
         this.mdns.browse();
+        this.logger.info('discovery', 'mDNS 已启动');
       } catch (e) {
+        this.logger.error('discovery', 'mDNS 启动失败', e.message);
         this.emit('warn', 'mDNS 启动失败: ' + e.message);
       }
     }
@@ -685,6 +709,7 @@ class LanFileShare extends require('events').EventEmitter {
       clearInterval(this._speedTimer);
       clearInterval(this._pruneTimer);
     } catch (e) {}
+    if (this.logger) this.logger.info('engine', '服务停止');
     if (this.bridge) this.bridge.stop();
     if (this.udp) this.udp.stop();
     if (this.mdns) this.mdns.stop();
@@ -699,6 +724,7 @@ class LanFileShare extends require('events').EventEmitter {
     }
     if (this.server) await new Promise((r) => this.server.close(() => r()));
     if (this.db) this.db.close();
+    if (this.logger) this.logger.stop();
   }
 }
 

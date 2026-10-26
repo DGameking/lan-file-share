@@ -88,6 +88,33 @@ async function main() {
   const recvDir = path.join(BASE, 'tmp-t2', 'b', 'received');
   console.log('  接收目录:', fs.existsSync(recvDir) ? fs.readdirSync(recvDir).join(', ') : '(不存在)');
 
+  console.log('== 跨设备会话文件：A 上传 → B 通过代理下载 ==');
+  const fd2 = new FormData();
+  fd2.append('file', new Blob([Buffer.from('跨设备文件内容-hello')], { type: 'text/plain' }), '桥接文件.txt');
+  const up = await (await fetch('http://127.0.0.1:18200/api/chat/upload', { method: 'POST', body: fd2 })).json();
+  if (!up.ok) throw new Error('A 上传失败');
+  const f0 = up.files[0];
+  c1.ws.send(JSON.stringify({ type: 'chat.file', files: [{ fileId: f0.fileId, name: f0.name, size: f0.size, mime: f0.mime }] }));
+  await wait(1500);
+  const histB2 = await (await fetch('http://127.0.0.1:18201/api/chat/history')).json();
+  const fileMsg = (histB2.rows || histB2).reverse().find((r) => r.kind === 'file');
+  if (!fileMsg) throw new Error('B 历史中没有文件消息');
+  const meta = JSON.parse(fileMsg.file_meta || '[]')[0];
+  console.log('  B 收到文件消息:', meta.name, 'origin=', meta.origin);
+  if (!meta.origin) throw new Error('远端文件未带 origin 标记');
+  const proxied = await fetch(`http://127.0.0.1:18201/api/chat/remote/${selfA.deviceId}/${encodeURIComponent(meta.fileId)}`);
+  const proxiedText = await proxied.text();
+  console.log(proxied.ok && proxiedText === '跨设备文件内容-hello' ? '  ✔ 跨设备代理下载成功（内容一致）' : `  ✘ 代理下载失败 HTTP ${proxied.status}: ${proxiedText.slice(0, 80)}`);
+  const prev = await fetch(`http://127.0.0.1:18201/api/chat/remote/${selfA.deviceId}/${encodeURIComponent(meta.fileId)}?mode=preview`);
+  console.log(prev.ok ? '  ✔ 预览代理可用' : `  ✘ 预览代理失败 HTTP ${prev.status}`);
+
+  console.log('== 自诊断（实例 B） ==');
+  const diag = await (await fetch('http://127.0.0.1:18201/api/admin/diagnose', { method: 'POST' })).json();
+  console.log('  诊断结论:', diag.summary);
+  for (const c of diag.checks) console.log(`   ${c.ok ? '✔' : '✘'}${c.fixed ? '(已修复)' : ''} ${c.name}: ${c.detail}`);
+  const rt = await (await fetch('http://127.0.0.1:18201/api/admin/runtime-logs?lines=5')).json();
+  console.log('  运行日志样例:', (rt.lines || []).slice(-2).join(' | ').slice(0, 200));
+
   console.log('== 完成，清理 ==');
   c1.ws.close(); c2.ws.close();
   a.kill(); b.kill();

@@ -189,6 +189,37 @@
           <p v-else class="muted">暂无日志</p>
         </section>
 
+        <!-- 诊断 -->
+        <section v-show="tab === 'diag'">
+          <div class="toolbar">
+            <button class="primary" @click="runDiag" :disabled="diagRunning">{{ diagRunning ? '自检中…' : '🔍 一键自检与修复' }}</button>
+            <span v-if="diagResult" :class="diagResult.ok ? 'ok' : 'fail'" style="font-weight:600">{{ diagResult.summary }}</span>
+          </div>
+          <table v-if="diagResult && diagResult.checks.length">
+            <thead><tr><th>检查项</th><th>状态</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr class="row" v-for="(c, i) in diagResult.checks" :key="i">
+                <td>{{ c.name }}</td>
+                <td><span class="pill" :class="c.ok ? 'on' : 'off'">{{ c.ok ? '正常' : '异常' }}</span><span v-if="c.fixed" class="pill on" style="margin-left:6px">已自动修复</span></td>
+                <td class="small muted">{{ c.detail }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-if="!diagResult" class="muted small">点「一键自检」检查数据目录 / 数据库 / 发现服务 / 会话桥 / 磁盘等子系统，可修复项会自动处理。</p>
+
+          <h3 style="margin:22px 0 10px;color:var(--muted);font-size:14px">运行日志（最近 {{ runtimeLogs.length }} 行）</h3>
+          <div class="toolbar">
+            <button @click="loadRuntime">刷新</button>
+            <button @click="toggleRuntimeAuto">{{ runtimeAuto ? '⏸ 停止自动刷新' : '▶ 自动刷新' }}</button>
+            <span class="muted small">错误与警告行高亮显示；日志文件保留 7 天</span>
+          </div>
+          <div style="background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px;max-height:420px;overflow:auto">
+            <div class="log-line" v-for="(l, i) in runtimeLogs" :key="i"
+              :style="l.includes('[error]') ? 'color:var(--red)' : l.includes('[warn]') ? 'color:var(--yellow)' : ''">{{ l }}</div>
+            <p v-if="!runtimeLogs.length" class="muted small" style="padding:8px">暂无日志</p>
+          </div>
+        </section>
+
         <!-- 设置 -->
         <section v-show="tab === 'settings'">
           <div class="form-grid" style="max-width:720px">
@@ -275,7 +306,7 @@
           const tab = ref('overview');
           const tabs = [
             { id: 'overview', label: '概览' }, { id: 'shares', label: '共享' }, { id: 'devices', label: '设备' },
-            { id: 'chat', label: '会话' }, { id: 'logs', label: '日志' }, { id: 'settings', label: '设置' },
+            { id: 'chat', label: '会话' }, { id: 'logs', label: '日志' }, { id: 'diag', label: '诊断' }, { id: 'settings', label: '设置' },
           ];
           const remote = ref(false);
           const self = ref({});
@@ -420,6 +451,35 @@
           // ---------- 日志 ----------
           async function clearLogs() { if (!confirm('清空全部日志？')) return; await req('/api/logs', { method: 'DELETE' }); loadLogs(); }
 
+          // ---------- 诊断 / 运行日志 ----------
+          const runtimeLogs = ref([]);
+          const runtimeAuto = ref(false);
+          const diagResult = ref(null);
+          const diagRunning = ref(false);
+          let runtimeTimer = null;
+          async function loadRuntime() {
+            try {
+              const d = await req('/api/admin/runtime-logs?lines=400');
+              runtimeLogs.value = d.lines || [];
+            } catch (e) {}
+          }
+          function toggleRuntimeAuto() {
+            runtimeAuto.value = !runtimeAuto.value;
+            clearInterval(runtimeTimer);
+            if (runtimeAuto.value) {
+              runtimeTimer = setInterval(loadRuntime, 2000);
+              loadRuntime();
+            }
+          }
+          async function runDiag() {
+            diagRunning.value = true;
+            try {
+              diagResult.value = await req('/api/admin/diagnose', { method: 'POST' });
+              toast(diagResult.value.summary, diagResult.value.ok ? 'ok' : 'err');
+            } catch (e) { toast('自检失败：' + e.message, 'err'); }
+            diagRunning.value = false;
+          }
+
           // ---------- 设置 ----------
           async function saveSettings() {
             try {
@@ -462,8 +522,10 @@
           return {
             tab, tabs, remote, self, fingerprint, stats, shares, devices, ping, logs, form,
             shareModal, shareForm, qrUrl, qrLink, connectShow, connectForm, pwShow, pwForm, chatQr, chatUrl, base,
+            runtimeLogs, runtimeAuto, diagResult, diagRunning,
             doLogin, logout, openShareModal, saveShare, toggleShare, removeShare, showQr,
             discover, trust, blacklist, doPing, connectManual, loadLogs, clearLogs, saveSettings, savePassword,
+            loadRuntime, toggleRuntimeAuto, runDiag,
             fmtSize, fmtSpeed, fmtTime,
           };
         },

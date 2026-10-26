@@ -31,6 +31,7 @@ function register(engine) {
   const notify = (ip, from, files, extra = {}) => {
     const payload = { from, files, ts: Date.now(), ...extra };
     engine.broadcast('drop.incoming', payload);
+    engine.logger && engine.logger.info('drop', `收到投送（${files.length} 个文件）`, { from, ip, names: files.map((f) => f.name).slice(0, 5) });
     engine.logEvent({
       event_type: 'file_receive',
       device_name: from,

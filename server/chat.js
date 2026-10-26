@@ -64,8 +64,10 @@ class ChatManager {
     app.post('/api/chat/upload', async (req, res) => {
       try {
         const saved = await saveMultipartFiles(req, this.filesDir, { maxBytes: CHAT_FILES_MAX_BYTES });
+        this.ctx.logger && this.ctx.logger.info('chat', '会话文件上传成功', { count: saved.length, names: saved.map((f) => f.name).slice(0, 5), ip: this.ctx.clientIp(req) });
         res.json({ ok: true, files: saved });
       } catch (e) {
+        this.ctx.logger && this.ctx.logger.error('chat', '会话文件上传失败', e.message);
         if (!res.headersSent) res.status(400).json({ error: e.message || 'bad_request' });
       }
     });
@@ -74,7 +76,10 @@ class ChatManager {
     app.get('/api/chat/file/:id', (req, res) => {
       const id = path.basename(req.params.id || '');
       const target = path.join(this.filesDir, id);
-      if (!fs.existsSync(target)) return res.status(404).json({ error: 'not_found' });
+      if (!fs.existsSync(target)) {
+        this.ctx.logger && this.ctx.logger.warn('chat', '会话文件下载 404', { id });
+        return res.status(404).json({ error: 'not_found' });
+      }
       const name = id.includes('_') ? id.slice(id.indexOf('_') + 1) : id;
       res.setHeader('Content-Type', 'application/octet-stream');
       res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
@@ -92,6 +97,65 @@ class ChatManager {
         'application/octet-stream';
       res.setHeader('Content-Type', mime);
       fs.createReadStream(target).pipe(res);
+    });
+
+    // 跨设备文件代理：本机作为中转，从文件所在设备拉取后转发给请求方。
+    // 全程同源 URL —— 规避浏览器跨源 download 失效、HTTPS 混合内容拦截、对端 IP 变化导致的历史链接 404。
+    app.get('/api/chat/remote/:deviceId/:fileId', async (req, res) => {
+      const deviceId = String(req.params.deviceId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+      const fileId = path.basename(req.params.fileId || '');
+      if (!deviceId || !fileId) return res.status(400).json({ error: 'bad_request' });
+
+      const bridge = this.ctx.bridge;
+      const info = bridge ? bridge.peerInfoOf(deviceId) : null;
+      if (!info || !info.host || !info.port) {
+        this.ctx.logger && this.ctx.logger.warn('chat', '跨设备文件代理失败：对端不可达', { deviceId, fileId });
+        return res.status(502).json({ error: 'device_unreachable', message: '文件所在设备不在线或地址未知' });
+      }
+
+      const mode = req.query.mode === 'preview' ? 'preview' : 'file';
+      const remoteUrl = `http://${info.host}:${info.port}/api/chat/${mode}/${encodeURIComponent(fileId)}`;
+      try {
+        const headers = {};
+        if (req.headers.range) headers.Range = req.headers.range; // 视频拖动进度需要
+        const upstream = await fetch(remoteUrl, { headers, signal: AbortSignal.timeout(15000) });
+        if (!upstream.ok && upstream.status !== 206) {
+          return res.status(upstream.status === 404 ? 404 : 502).json({ error: 'fetch_failed', upstream: upstream.status });
+        }
+        const passHeaders = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'content-disposition'];
+        for (const h of passHeaders) {
+          const v = upstream.headers.get(h);
+          if (v) res.setHeader(h, v);
+        }
+        if (!res.getHeader('content-type')) {
+          res.setHeader('Content-Type', 'application/octet-stream');
+        }
+        if (mode === 'file' && !res.getHeader('content-disposition')) {
+          const name = fileId.includes('_') ? fileId.slice(fileId.indexOf('_') + 1) : fileId;
+          res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+        }
+        res.status(upstream.status);
+        const reader = upstream.body.getReader();
+        const pump = async () => {
+          try {
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              if (res.destroyed) { try { await reader.cancel(); } catch (e) {} break; }
+              if (!res.write(Buffer.from(value))) {
+                await new Promise((r) => res.once('drain', r));
+              }
+            }
+            res.end();
+          } catch (e) {
+            try { res.destroy(); } catch (e2) {}
+          }
+        };
+        pump();
+      } catch (e) {
+        this.ctx.logger && this.ctx.logger.error('chat', '跨设备文件代理异常', { deviceId, fileId, error: e.message });
+        if (!res.headersSent) res.status(502).json({ error: 'device_unreachable', message: e.message });
+      }
     });
   }
 
@@ -252,12 +316,9 @@ class ChatManager {
           sender_id: `${payload.sender_id || 'u'}@${tag}`,
         };
         if (rec.kind === 'file' && Array.isArray(rec.files)) {
-          const info = this.ctx.bridge ? this.ctx.bridge.peerInfoOf(origin) : null;
-          const base = info && info.host && info.port ? `http://${info.host}:${info.port}` : '';
-          rec.files = rec.files.map((f) => ({
-            ...f,
-            url: base ? `${base}/api/chat/file/${encodeURIComponent(f.fileId)}` : '',
-          }));
+          // 标记来源设备（不写绝对地址 —— 展示端用本机同源代理 /api/chat/remote 动态解析，
+          // 避免跨源下载失效 / HTTPS 混合内容拦截 / 对端换 IP 后历史链接失效）
+          rec.files = rec.files.map((f) => ({ ...f, origin }));
         }
         rec.file_meta = rec.files ? JSON.stringify(rec.files) : rec.file_meta || null;
         this._persist(rec);

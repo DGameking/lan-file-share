@@ -354,7 +354,20 @@
       function relaunch() {
         if (window.lan && window.lan.relaunch) window.lan.relaunch();
       }
-      return { store, save, onText, onCheck, fps, copy, onHttps, httpsChanged, relaunch };
+      const diag = ref(null);
+      const diagRunning = ref(false);
+      async function runDiag() {
+        diagRunning.value = true;
+        const r = await api.invoke('engine:diagnose');
+        if (r.ok) diag.value = r.data;
+        else toast('自检失败: ' + (r.error || ''), 'warn');
+        diagRunning.value = false;
+        if (diag.value) toast(diag.value.summary, diag.value.ok ? 'ok' : 'warn');
+      }
+      function openLogsDir() {
+        api.invoke('engine:openLogsDir');
+      }
+      return { store, save, onText, onCheck, fps, copy, onHttps, httpsChanged, relaunch, diag, diagRunning, runDiag, openLogsDir };
     },
     template: `
       <div>
@@ -407,6 +420,26 @@
             <button class="btn sm ghost" @click="relaunch" v-if="httpsChanged">🔄 立即重启生效</button>
           </div>
           <div class="muted" style="margin-top:8px">开启后：屏幕共享与“添加到主屏幕（PWA）”可用，传输全程加密；手机首次访问需在浏览器中信任证书警告</div>
+        </div>
+
+        <div class="card">
+          <h3>诊断与修复</h3>
+          <div class="row" style="align-items:center">
+            <button class="btn sm" @click="runDiag" :disabled="diagRunning">{{ diagRunning ? '自检中…' : '🔍 一键自检与修复' }}</button>
+            <button class="btn ghost sm" @click="openLogsDir">打开运行日志文件夹</button>
+            <span v-if="diag" :style="{ color: diag.ok ? 'var(--ok,#16a34a)' : '#dc2626', fontWeight: 600 }">{{ diag.summary }}</span>
+          </div>
+          <table v-if="diag && diag.checks.length" style="margin-top:10px">
+            <thead><tr><th>检查项</th><th>状态</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr v-for="(c, i) in diag.checks" :key="i">
+                <td>{{ c.name }}</td>
+                <td><span class="tag" :class="c.ok ? 'green' : 'red'">{{ c.ok ? '正常' : '异常' }}</span><span v-if="c.fixed" class="tag green" style="margin-left:4px">已自动修复</span></td>
+                <td class="muted" style="font-size:12px">{{ c.detail }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="muted" style="margin-top:8px">自检覆盖：数据目录 / 数据库 / 发现服务 / 会话桥 / 接收目录 / 磁盘空间，可修复项自动处理</div>
         </div>
 
         <div class="card">

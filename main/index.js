@@ -54,7 +54,23 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+
+  // 渲染进程崩溃 → 运行日志（远程排障）
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    if (engine && engine.logger) engine.logger.error('electron', '渲染进程崩溃', details);
+  });
+  mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    if (engine && engine.logger) engine.logger.warn('electron', '页面加载失败', { code, desc, url });
+  });
 }
+
+// 主进程未捕获异常 → 运行日志（不中断应用）
+process.on('uncaughtException', (e) => {
+  if (engine && engine.logger) engine.logger.error('electron', '主进程未捕获异常', String(e && e.stack || e));
+});
+process.on('unhandledRejection', (e) => {
+  if (engine && engine.logger) engine.logger.error('electron', '未处理的 Promise 拒绝', String(e && (e.stack || e.message) || e));
+});
 
 /** 把引擎的广播事件同时转发给渲染进程（WebSocket 之外，本机窗口也实时刷新） */
 function bridgeEngineEvents() {
@@ -124,6 +140,11 @@ function registerIpc() {
   });
   ipcMain.handle('engine:openReceivedFolder', async () => {
     if (engine && engine.receivedDir) shell.openPath(engine.receivedDir);
+    return { ok: true };
+  });
+  h('engine:diagnose', async () => require('../server/diagnostics').run(engine));
+  ipcMain.handle('engine:openLogsDir', async () => {
+    if (engine) shell.openPath(require('path').join(engine.dataDir, 'logs'));
     return { ok: true };
   });
 

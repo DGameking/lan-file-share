@@ -58,6 +58,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
 .f-name{font-size:13px;font-weight:600;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .f-size{font-size:11px;opacity:.75}
 .img-prev{max-width:260px;max-height:200px;border-radius:10px;display:block;margin-top:4px;cursor:pointer}
+.file-offline{font-size:12px;color:var(--muted);background:#f1f3f8;border-radius:8px;padding:6px 10px;margin-top:4px}
 .typing{font-size:12px;color:var(--muted);height:18px;padding:0 22px 4px}
 /* 输入区 */
 .composer{background:var(--panel);border-top:1px solid var(--line);padding:10px 14px;display:flex;flex-direction:column;gap:8px}
@@ -119,6 +120,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
     </div>
     <div class="msgs" id="msgs"></div>
     <div class="typing" id="typing"></div>
+    <div id="uploadBar" style="display:none;font-size:12px;color:var(--accent);padding:0 22px 2px"></div>
     <div class="composer">
       <div class="pending" id="pending"></div>
       <div class="c-row">
@@ -242,19 +244,32 @@ function renderAll(){
 function addDay(d){ var el=document.createElement('div'); el.className='day'; el.textContent=d; msgsEl.appendChild(el); }
 
 function fileHtml(f){
-  var isRemote = !!f.url;
-  var base = isRemote ? f.url.replace(/\/api\/chat\/file\/.*$/, '') : '';
-  var fileUrl = isRemote ? f.url : '/api/chat/file/'+encodeURIComponent(f.fileId);
-  var prevUrl = isRemote ? (base+'/api/chat/preview/'+encodeURIComponent(f.fileId)) : '/api/chat/preview/'+encodeURIComponent(f.fileId);
+  // 远端文件走本机同源代理（/api/chat/remote），规避跨源下载失效与 HTTPS 混合内容拦截
+  var fileUrl = f.origin
+    ? '/api/chat/remote/'+encodeURIComponent(f.origin)+'/'+encodeURIComponent(f.fileId)
+    : (f.url || '/api/chat/file/'+encodeURIComponent(f.fileId));
+  var prevUrl = f.origin
+    ? '/api/chat/remote/'+encodeURIComponent(f.origin)+'/'+encodeURIComponent(f.fileId)+'?mode=preview'
+    : '/api/chat/preview/'+encodeURIComponent(f.fileId);
   var icon = isImage(f.mime,f.name)?'🖼':isVideo(f.mime,f.name)?'🎬':/^audio\//.test(f.mime||'')?'🎵':'📦';
   var h='<a class="file-card" href="'+fileUrl+'" download="'+esc(f.name)+'">'+
     '<span class="f-ic">'+icon+'</span><span><div class="f-name">'+esc(f.name)+'</div>'+
-    '<div class="f-size">'+fmtSize(f.size)+(f.relPath&&f.relPath!=='false'&&f.relPath.indexOf('/')>=0?' · '+esc(f.relPath.split('/')[0])+'/…':'')+'</div></span></a>';
-  if(isImage(f.mime,f.name)) h+='<img class="img-prev" loading="lazy" src="'+prevUrl+'" onclick="showImg(this.src)" />';
-  if(isVideo(f.mime,f.name)) h+='<video class="img-prev" controls preload="metadata" src="'+prevUrl+'"></video>';
+    '<div class="f-size">'+fmtSize(f.size)+(f.relPath&&f.relPath!=='false'&&f.relPath.indexOf('/')>=0?' · '+esc(f.relPath.split('/')[0])+'/…':'')+(f.origin?' · <span style="opacity:.6">来自其他设备</span>':'')+'</div></span></a>';
+  if(isImage(f.mime,f.name)) h+='<img class="img-prev" loading="lazy" src="'+prevUrl+'" onclick="showImg(this.src)" onerror="imgFail(this)" />';
+  if(isVideo(f.mime,f.name)) h+='<video class="img-prev" controls preload="metadata" src="'+prevUrl+'" onerror="vidFail(this)"></video>';
   if(/^audio\//.test(f.mime||'')) h+='<audio controls style="display:block;margin-top:4px;max-width:280px" src="'+prevUrl+'"></audio>';
   return h;
 }
+window.imgFail=function(el){
+  var d=document.createElement('div');
+  d.className='file-offline'; d.textContent='🖼 预览加载失败（文件所在设备可能离线，点击文件卡片仍可尝试下载）';
+  el.replaceWith(d);
+};
+window.vidFail=function(el){
+  var d=document.createElement('div');
+  d.className='file-offline'; d.textContent='🎬 视频加载失败（文件所在设备可能离线，点击文件卡片仍可尝试下载）';
+  el.replaceWith(d);
+};
 window.showImg=function(src){ $('imgBig').src=src; $('imgModal').style.display='flex'; };
 
 function renderMsg(r,noScroll){
@@ -340,17 +355,32 @@ async function uploadAndSend(list, withRel){
     fd.append('file', item, withRel? (item.webkitRelativePath||item.name) : item.name);
   }
   $('btnSend').disabled=true;
+  var bar=$('uploadBar');
+  bar.style.display='block'; bar.textContent='正在发送 '+list.length+' 个文件… 0%';
   try{
-    var res=await fetch('/api/chat/upload',{method:'POST',body:fd});
-    var j=await res.json();
+    var j=await new Promise(function(resolve,reject){
+      var xhr=new XMLHttpRequest();
+      xhr.open('POST','/api/chat/upload');
+      xhr.upload.onprogress=function(e){
+        if(e.lengthComputable){
+          var pct=Math.round((e.loaded/e.total)*100);
+          bar.textContent='正在发送 '+list.length+' 个文件… '+pct+'%';
+        }
+      };
+      xhr.onload=function(){ try{ resolve(JSON.parse(xhr.responseText)); }catch(err){ reject(new Error('bad_response')); } };
+      xhr.onerror=function(){ reject(new Error('network_error')); };
+      xhr.send(fd);
+    });
     if(j.ok){
+      bar.textContent='发送完成 ✓';
+      setTimeout(function(){ bar.style.display='none'; },900);
       var files=j.files.map(function(f,i2){
         return { fileId:f.fileId, name:f.name, size:f.size, mime:f.mime,
                  relPath: withRel ? (list[i2].webkitRelativePath||'') : '' };
       });
       send({type:'chat.file', files:files});
-    } else { alert('上传失败：'+(j.error||'')); }
-  }catch(e){ alert('上传失败：'+e.message); }
+    } else { bar.style.display='none'; alert('上传失败：'+(j.error||'')); }
+  }catch(e){ bar.style.display='none'; alert('上传失败：'+e.message); }
   $('btnSend').disabled=false;
 }
 $('btnFile').onclick=function(){

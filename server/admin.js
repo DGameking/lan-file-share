@@ -146,6 +146,24 @@ function register(ctx) {
 
   // 管理 API 统一鉴权
   app.use('/api', adminAuth(ctx));
+
+  // ---- 以下路由位于鉴权之后注册：本机免登录，远程需持管理令牌 ----
+
+  // 运行日志（实时排障用）
+  app.get('/api/admin/runtime-logs', (req, res) => {
+    const lines = Math.min(Number(req.query.lines) || 400, 2000);
+    res.json({ ok: true, lines: ctx.logger ? ctx.logger.recent(lines) : [], files: ctx.logger ? ctx.logger.files() : [] });
+  });
+
+  // 一键自检与自动修复
+  app.post('/api/admin/diagnose', async (req, res) => {
+    try {
+      const result = await require('./diagnostics').run(ctx);
+      res.json(result);
+    } catch (e) {
+      res.status(500).json({ ok: false, summary: '自检执行失败：' + e.message, checks: [] });
+    }
+  });
 }
 
 module.exports = { register, adminAuth, isLoopback };
