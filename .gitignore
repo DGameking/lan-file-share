@@ -10,3 +10,5 @@ tools/fnpack.exe
 fnos-app/app/target/node_modules/
 .workbuddy-memory-backup-*.md
 fnos-app/app/target/
+build/Modern_flat_app_icon_design*.png
+build/Remove_the_small__AI*.png

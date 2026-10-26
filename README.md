@@ -7,6 +7,19 @@
 
 一台电脑，一键把任意文件夹共享到局域网；同网内的手机、平板、其他电脑，用浏览器扫码即开即看、即点即下，无需安装、无需注册、端到端加密可控。
 
+## 下载（各平台 · 双架构）
+
+| 平台 | 文件 | 架构 |
+|---|---|---|
+| Windows 安装包 | `局域网文件共享-Setup-x.y.z-x64.exe` / `-arm64.exe` | x64 / ARM64 |
+| Windows 便携包 | `局域网文件共享-便携版-x.y.z-x64.zip` / `-arm64.zip` | x64 / ARM64 |
+| macOS 安装 | `局域网文件共享-x.y.z-x64.dmg` / `-arm64.dmg` | Intel / Apple Silicon |
+| macOS 便携 | `局域网文件共享-x.y.z-x64.zip` / `-arm64.zip` | Intel / Apple Silicon |
+| Linux | `局域网文件共享-x.y.z-x64.AppImage` / `-arm64.AppImage` | x64 / ARM64 |
+| 飞牛 fnOS | `LanFileShare.fpk` | 单包通用 |
+
+前往 [Releases](https://github.com/DGameking/lan-file-share/releases) 下载。
+
 ## 核心特性（对齐 PRD）
 
 - **一键共享**：选择文件夹即可生成可访问链接与二维码，支持只读 / 可写 / 管理三种权限。
@@ -97,13 +110,14 @@ npm run dist:mac     # macOS dmg（需在 macOS 上执行）
 npm run dist         # 按当前平台打包
 ```
 
-### macOS dmg 构建（三种方式）
+### macOS / Linux 构建（GitHub Actions 云端，推荐）
 
-1. **GitHub Actions 云端构建（推荐，零环境成本）**：仓库已带 `.github/workflows/build-mac.yml`——推送到 GitHub 后在 Actions 页手动触发，或推送 `v*` 标签自动构建，产出 x64 + arm64 双架构 dmg（未签名，需右键打开或允许"任何来源"）。
-2. **WSL2 + OSX-KVM 本地虚拟机**：在 WSL2 中启用嵌套虚拟化（`/dev/kvm`），按 kholia/OSX-KVM 安装 macOS，装 Node 20 + Xcode CLT 后执行 `npx electron-builder --mac`。
-3. **真实 Mac**：克隆仓库后 `npm install && npm run dist:mac`。
+仓库已带 `.github/workflows/build-mac.yml`（build-desktop）：
+- **macOS**：macos-14 runner 产出 **x64 + arm64** 双架构 dmg 与 .app zip（未签名，首次打开需右键 → 打开）；
+- **Linux**：ubuntu runner 产出 **x64 + arm64** 双架构 AppImage；
+- **推送 `v*` 标签自动创建 GitHub Release**，mac / Linux 产物自动挂到 Release 供下载（Windows 安装包与 fpk 由本地构建后 `gh release upload` 补挂）。
 
-> 注意：electron-builder 只需要 **Xcode Command Line Tools**（`xcode-select --install`，约 1.5GB），无需完整 Xcode。未签名 dmg 首次打开需右键 → 打开。
+本机构建替代方案：真实 Mac 上 `npm run dist:mac`；WSL2 + OSX-KVM 虚拟机亦可。
 
 ### 飞牛 fnOS（fpk 应用包）
 
@@ -123,7 +137,7 @@ NAS 端说明：
 - 会话接收的文件落在共享目录 `lanfileshare/received`，可在文件管理器中直接管理；
 - 环境变量约定：`LFS_PORT`（端口）、`LFS_DATA_DIR`（数据目录）、`LFS_CHAT_FILES`（会话文件目录）。
 
-> **打包说明（Windows）**：`build.win` 已设置 `signAndEditExecutable: false`，跳过 Authenticode 代码签名与图标注入（即产物使用 Electron 默认图标、不做签名）。原因：本机沙箱环境无法创建 `winCodeSign` 工具包内的 darwin `.dylib` 符号链接，而 rcedit 图标注入依赖该工具链；跳过它即可正常产出安装包。若需在可签名环境打包带自定义图标的安装包，删去该选项并自备代码签名证书即可。产物位于 `dist/`：`* Setup *.exe`（安装包）与可解包目录 `win-unpacked`（便携离线版，可直接压缩分发）。
+> **打包说明**：应用已内置自绘 Logo（`build/icon.ico / icon.icns`，exe 图标由 rcedit 注入、托盘图标 `main/assets/tray.png`）。Windows 本地沙箱打包需预置 winCodeSign 缓存（见 scripts 注释）；Linux AppImage 依赖符号链接，建议走 GitHub Actions。产物命名均带架构后缀：`-x64` / `-arm64`。
 
 ## 使用流程
 
