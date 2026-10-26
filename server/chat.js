@@ -49,6 +49,17 @@ class ChatManager {
       res.json(this.ctx.db.listChatMessages(200, before));
     });
 
+    // 会话页二维码（供管理端展示，手机扫码直达 /chat）
+    app.get('/api/chat/qrcode', async (req, res) => {
+      try {
+        const url = String(req.query.url || `http://${this.ctx.localIp}:${this.ctx.httpPort}/chat`).slice(0, 300);
+        const dataUrl = await require('qrcode').toDataURL(url, { margin: 1, width: 220 });
+        res.json({ dataUrl, url });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
     // 会话文件上传（multipart，支持多文件；文件夹由客户端逐个文件携带相对路径）
     app.post('/api/chat/upload', (req, res) => {
       let bb;

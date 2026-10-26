@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>管理控制台 · 局域网文件共享</title>
+    <style>
+      :root {
+        --bg: #0f1115; --panel: #1a1d24; --line: #2a2e38; --text: #e6e8ec; --muted: #9aa0aa;
+        --accent: #4f8cff; --green: #36c275; --red: #ff5d5d; --yellow: #f5c04e;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: var(--bg); color: var(--text); min-height: 100vh; }
+      header { padding: 14px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+      header h1 { font-size: 17px; margin: 0; }
+      nav { display: flex; gap: 4px; flex-wrap: wrap; }
+      nav button { background: transparent; border: 1px solid transparent; color: var(--muted); border-radius: 8px; padding: 7px 12px; cursor: pointer; font-size: 14px; }
+      nav button.on { background: var(--panel); color: var(--text); border-color: var(--line); }
+      .who { margin-left: auto; font-size: 13px; color: var(--muted); display: flex; gap: 10px; align-items: center; }
+      button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+        padding: 7px 12px; cursor: pointer; font-size: 13px; }
+      button:hover { border-color: var(--accent); }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      button.danger { color: var(--red); }
+      button.sm { padding: 4px 9px; font-size: 12px; }
+      input, select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
+      input:focus, select:focus { outline: none; border-color: var(--accent); }
+      main { padding: 18px 20px; max-width: 1080px; margin: 0 auto; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); font-size: 14px; }
+      th { color: var(--muted); font-weight: 500; }
+      tr.row:hover { background: #20242d; }
+      .muted { color: var(--muted); } .small { font-size: 12px; }
+      .pill { display: inline-block; padding: 2px 9px; border-radius: 99px; font-size: 12px; border: 1px solid var(--line); }
+      .pill.on { color: var(--green); } .pill.off { color: var(--red); }
+      .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 22px; }
+      .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+      .stat b { display: block; font-size: 24px; margin-top: 4px; }
+      .stat span { font-size: 12px; color: var(--muted); }
+      .toolbar { display: flex; gap: 8px; margin: 0 0 14px; flex-wrap: wrap; align-items: center; }
+      .modal { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 30; }
+      .modal .box { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px; width: min(440px, 92vw); }
+      .modal h3 { margin: 0 0 14px; font-size: 16px; }
+      .modal label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 5px; }
+      .modal input, .modal select { width: 100%; }
+      .modal .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+      #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line);
+        border-radius: 10px; padding: 10px 18px; font-size: 14px; display: none; z-index: 50; }
+      #toast.ok { border-color: var(--green); } #toast.err { border-color: var(--red); }
+      .kv { display: grid; grid-template-columns: 130px 1fr; gap: 8px 14px; font-size: 14px; }
+      .kv .k { color: var(--muted); }
+      .qrbox { text-align: center; }
+      .qrbox img { width: 220px; height: 220px; border-radius: 10px; background: #fff; padding: 8px; }
+      .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+      .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+      .field input, .field select { width: 100%; }
+      #login { max-width: 360px; margin: 12vh auto 0; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 28px; }
+      #login h2 { margin: 0 0 6px; font-size: 19px; }
+      #login p { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+      #login input { width: 100%; margin-bottom: 12px; }
+      .log-line { font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--line); word-break: break-all; }
+      .log-line .t { color: var(--muted); margin-right: 10px; }
+      .ok { color: var(--green); } .fail { color: var(--red); }
+      a { color: var(--accent); }
+    </style>
+  </head>
+  <body>
+    <!-- 登录视图 -->
+    <div id="login" style="display:none">
+      <h2>🛠 管理控制台</h2>
+      <p id="loginHint">请输入管理密码</p>
+      <input id="loginPwd" type="password" placeholder="管理密码" @keydown.enter="doLogin" />
+      <button class="primary" style="width:100%" @click="doLogin">登 录</button>
+    </div>
+
+    <!-- 主界面 -->
+    <div id="app" style="display:none">
+      <header>
+        <h1>🛠 管理控制台</h1>
+        <nav>
+          <button v-for="t in tabs" :key="t.id" :class="{ on: tab === t.id }" @click="tab = t.id">{{ t.label }}</button>
+        </nav>
+        <div class="who">
+          <span v-if="remote">{{ self.deviceName }} · 远程</span><span v-else>{{ self.deviceName }} · 本机</span>
+          <button class="sm" @click="logout" v-if="remote">退出</button>
+        </div>
+      </header>
+
+      <main>
+        <!-- 概览 -->
+        <section v-show="tab === 'overview'">
+          <div class="cards">
+            <div class="stat"><span>运行中共享</span><b>{{ stats.shares }}<span class="muted small"> / {{ stats.totalShares }}</span></b></div>
+            <div class="stat"><span>在线设备</span><b>{{ stats.onlineDevices }}<span class="muted small"> / {{ stats.devices }}</span></b></div>
+            <div class="stat"><span>↑ 速度</span><b class="small">{{ fmtSpeed(stats.speed && stats.speed.up) }}</b></div>
+            <div class="stat"><span>↓ 速度</span><b class="small">{{ fmtSpeed(stats.speed && stats.speed.down) }}</b></div>
+            <div class="stat"><span>累计流量</span><b class="small">{{ fmtSize(stats.traffic && stats.traffic.up) }} ↑<br>{{ fmtSize(stats.traffic && stats.traffic.down) }} ↓</b></div>
+          </div>
+          <div class="kv">
+            <span class="k">本机名称</span><span>{{ self.deviceName }}</span>
+            <span class="k">服务地址</span><span>http://{{ self.host }}:{{ self.port }}</span>
+            <span class="k">设备指纹</span><span class="small muted">{{ fingerprint }}</span>
+            <span class="k">快捷入口</span><span><a :href="base + '/chat'" target="_blank">统一会话</a> · <a :href="base + '/'" target="_blank">门户页</a></span>
+          </div>
+        </section>
+
+        <!-- 共享 -->
+        <section v-show="tab === 'shares'">
+          <div class="toolbar">
+            <button class="primary" @click="openShareModal()">＋ 添加共享</button>
+            <span class="muted small">提示：本页无法选择本机目录，路径需手填服务器上的绝对路径（Windows 如 D:\docs，NAS 如 /vol1/1000/docs）</span>
+          </div>
+          <table>
+            <thead><tr><th>名称</th><th>路径</th><th>权限</th><th>状态</th><th>密码</th><th></th></tr></thead>
+            <tbody>
+              <tr class="row" v-for="s in shares" :key="s.id">
+                <td>{{ s.name }}</td>
+                <td class="small muted">{{ s.path }}</td>
+                <td>{{ s.permission === 'write' ? '可写' : s.permission === 'admin' ? '管理' : '只读' }}</td>
+                <td><span class="pill" :class="s.enabled ? 'on' : 'off'">{{ s.enabled ? '运行中' : '已停止' }}</span></td>
+                <td>{{ s.hasPassword ? '🔒' : '—' }}</td>
+                <td style="white-space:nowrap">
+                  <button class="sm" @click="toggleShare(s)">{{ s.enabled ? '停止' : '启动' }}</button>
+                  <button class="sm" @click="showQr(s)">二维码</button>
+                  <button class="sm" @click="openShareModal(s)">编辑</button>
+                  <button class="sm danger" @click="removeShare(s)">删除</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-if="!shares.length" class="muted">暂无共享</p>
+        </section>
+
+        <!-- 设备 -->
+        <section v-show="tab === 'devices'">
+          <div class="toolbar">
+            <button class="primary" @click="discover">重新探测</button>
+            <button @click="connectShow = true">手动连接</button>
+          </div>
+          <table>
+            <thead><tr><th>设备</th><th>地址</th><th>状态</th><th>信任</th><th>延迟</th><th></th></tr></thead>
+            <tbody>
+              <tr class="row" v-for="d in devices" :key="d.device_id">
+                <td>{{ d.device_name }} <span class="small muted">{{ d.is_self ? '（本机）' : '' }}</span></td>
+                <td class="small muted">{{ d.host }}:{{ d.port }}</td>
+                <td><span class="pill" :class="d.is_online ? 'on' : 'off'">{{ d.is_online ? '在线' : '离线' }}</span></td>
+                <td>{{ d.is_trusted ? '✅' : d.is_blacklisted ? '🚫' : '—' }}</td>
+                <td class="small">{{ ping[d.device_id] != null ? ping[d.device_id] + ' ms' : '' }}</td>
+                <td style="white-space:nowrap">
+                  <button class="sm" v-if="!d.is_self && !d.is_trusted" @click="trust(d, true)">信任</button>
+                  <button class="sm" v-if="!d.is_self && d.is_trusted" @click="trust(d, false)">取消信任</button>
+                  <button class="sm danger" v-if="!d.is_self && !d.is_blacklisted" @click="blacklist(d, true)">拉黑</button>
+                  <button class="sm" v-if="d.is_blacklisted" @click="blacklist(d, false)">解除拉黑</button>
+                  <button class="sm" v-if="!d.is_self && d.is_online" @click="doPing(d)">测速</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- 会话 -->
+        <section v-show="tab === 'chat'">
+          <div class="cards">
+            <div class="stat" style="grid-column: 1 / -1;">
+              <span>统一会话</span>
+              <p class="muted" style="font-size:14px;line-height:1.8">
+                所有连入设备（桌面端 / 手机浏览器 / NAS）自动进入同一会话框：文字聊天、发送任意文件与文件夹、WebRTC 音视频通话。<br>
+                手机扫码直接进入：</p>
+              <div class="qrbox"><img v-if="chatQr" :src="chatQr" alt="会话二维码" /><p class="small muted" v-if="chatQr">{{ chatUrl }}</p></div>
+            </div>
+          </div>
+          <div class="toolbar"><a :href="chatUrl" target="_blank"><button class="primary">打开会话页面</button></a></div>
+        </section>
+
+        <!-- 日志 -->
+        <section v-show="tab === 'logs'">
+          <div class="toolbar">
+            <button @click="loadLogs">刷新</button>
+            <button class="danger" @click="clearLogs">清空日志</button>
+          </div>
+          <div v-if="logs.length">
+            <div class="log-line" v-for="(l, i) in logs" :key="i">
+              <span class="t">{{ fmtTime(l.created_at) }}</span>
+              <span :class="l.result === 'success' ? 'ok' : 'fail'">{{ l.event_type }}</span>
+              <span class="muted"> {{ l.device_name || l.target || '' }} {{ l.ip || '' }} {{ l.detail || '' }}</span>
+            </div>
+          </div>
+          <p v-else class="muted">暂无日志</p>
+        </section>
+
+        <!-- 设置 -->
+        <section v-show="tab === 'settings'">
+          <div class="form-grid" style="max-width:720px">
+            <div class="field"><label>设备名称</label><input v-model="form.deviceName" /></div>
+            <div class="field"><label>HTTP 端口（重启服务后生效）</label><input v-model.number="form.httpPort" type="number" /></div>
+            <div class="field"><label>心跳间隔（秒）</label><input v-model.number="form.heartbeatInterval" type="number" /></div>
+            <div class="field"><label>离线判定（秒）</label><input v-model.number="form.offlineTimeout" type="number" /></div>
+            <div class="field"><label>默认共享权限</label>
+              <select v-model="form.defaultPermission"><option value="read">只读</option><option value="write">可写</option><option value="admin">管理</option></select></div>
+            <div class="field"><label>新设备接入</label>
+              <select v-model="form.firstConnectConfirm"><option :value="true">需要确认</option><option :value="false">自动信任</option></select></div>
+            <div class="field"><label>允许被其他设备发现</label>
+              <select v-model="form.allowBeDiscovered"><option :value="true">允许</option><option :value="false">隐身</option></select></div>
+            <div class="field"><label>UDP 探测</label>
+              <select v-model="form.udp"><option :value="true">开启</option><option :value="false">关闭</option></select></div>
+            <div class="field"><label>mDNS 探测</label>
+              <select v-model="form.mdns"><option :value="true">开启</option><option :value="false">关闭</option></select></div>
+          </div>
+          <div class="toolbar" style="margin-top:16px">
+            <button class="primary" @click="saveSettings">保存设置</button>
+            <button @click="pwShow = true">{{ form.adminPasswordSet ? '修改管理密码' : '设置管理密码' }}</button>
+            <span class="muted small">管理密码用于其他设备登录本控制台；未设置时仅本机可访问管理功能</span>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- 共享编辑弹窗 -->
+    <div class="modal" v-if="shareModal">
+      <div class="box">
+        <h3>{{ shareForm.id ? '编辑共享' : '添加共享' }}</h3>
+        <label>名称</label><input v-model="shareForm.name" placeholder="如 项目文档" />
+        <label>服务器上的路径</label><input v-model="shareForm.path" placeholder="如 D:\docs 或 /vol1/1000/docs" />
+        <label>权限</label>
+        <select v-model="shareForm.permission"><option value="read">只读</option><option value="write">可写</option><option value="admin">管理</option></select>
+        <label>访问密码（留空则不设防）</label><input v-model="shareForm.password" type="password" placeholder="留空表示不修改/清除" />
+        <div class="acts"><button @click="shareModal = false">取消</button><button class="primary" @click="saveShare">保存</button></div>
+      </div>
+    </div>
+
+    <!-- 二维码弹窗 -->
+    <div class="modal" v-if="qrUrl" @click="qrUrl = null">
+      <div class="box qrbox" @click.stop>
+        <h3>扫码访问</h3>
+        <img :src="qrUrl" alt="二维码" />
+        <p class="small muted">{{ qrLink }}</p>
+        <button @click="qrUrl = null">关闭</button>
+      </div>
+    </div>
+
+    <!-- 手动连接弹窗 -->
+    <div class="modal" v-if="connectShow">
+      <div class="box">
+        <h3>手动连接设备</h3>
+        <label>主机地址</label><input v-model="connectForm.host" placeholder="如 192.168.1.23" />
+        <label>端口（可选）</label><input v-model.number="connectForm.port" type="number" placeholder="默认 18180" />
+        <div class="acts"><button @click="connectShow = false">取消</button><button class="primary" @click="connectManual">连接</button></div>
+      </div>
+    </div>
+
+    <!-- 管理密码弹窗 -->
+    <div class="modal" v-if="pwShow">
+      <div class="box">
+        <h3>{{ form.adminPasswordSet ? '修改管理密码' : '设置管理密码' }}</h3>
+        <template v-if="form.adminPasswordSet && remote"><label>旧密码</label><input v-model="pwForm.old" type="password" /></template>
+        <label>新密码（至少 4 位）</label><input v-model="pwForm.next" type="password" />
+        <label>确认新密码</label><input v-model="pwForm.next2" type="password" />
+        <div class="acts"><button @click="pwShow = false">取消</button><button class="primary" @click="savePassword">保存</button></div>
+      </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <script src="/vendor/vue.global.js"></script>
+    <script>
+      const { createApp, ref, reactive, onMounted } = Vue;
+      createApp({
+        setup() {
+          const TOKEN_KEY = 'lfs_admin_token';
+          const token = () => localStorage.getItem(TOKEN_KEY) || '';
+          const headers = () => (token() ? { 'x-admin-token': token() } : {});
+          const base = location.origin;
+
+          const tab = ref('overview');
+          const tabs = [
+            { id: 'overview', label: '概览' }, { id: 'shares', label: '共享' }, { id: 'devices', label: '设备' },
+            { id: 'chat', label: '会话' }, { id: 'logs', label: '日志' }, { id: 'settings', label: '设置' },
+          ];
+          const remote = ref(false);
+          const self = ref({});
+          const fingerprint = ref('');
+          const stats = ref({});
+          const shares = ref([]);
+          const devices = ref([]);
+          const ping = ref({});
+          const logs = ref([]);
+          const chatQr = ref(''); const chatUrl = ref('');
+          const form = reactive({ adminPasswordSet: false });
+          const shareModal = ref(false);
+          const shareForm = reactive({ id: '', name: '', path: '', permission: 'read', password: '' });
+          const qrUrl = ref(''); const qrLink = ref('');
+          const connectShow = ref(false);
+          const connectForm = reactive({ host: '', port: null });
+          const pwShow = ref(false);
+          const pwForm = reactive({ old: '', next: '', next2: '' });
+
+          function toast(msg, type) {
+            const el = document.getElementById('toast');
+            el.textContent = msg; el.className = type || ''; el.style.display = 'block';
+            clearTimeout(el._t); el._t = setTimeout(() => (el.style.display = 'none'), 2200);
+          }
+          async function req(path, opt = {}) {
+            opt.headers = { 'Content-Type': 'application/json', ...headers(), ...(opt.headers || {}) };
+            const r = await fetch(base + path, opt);
+            if (r.status === 401) { showLogin('登录已过期，请重新输入管理密码'); throw new Error('unauthorized'); }
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(data.error || r.status);
+            return data;
+          }
+          function fmtSize(n) {
+            n = Number(n) || 0;
+            if (n < 1024) return n + ' B';
+            if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+            if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+            return (n / 1073741824).toFixed(2) + ' GB';
+          }
+          function fmtSpeed(n) {
+            n = Number(n) || 0;
+            if (n < 1048576) return (n / 1024).toFixed(0) + ' KB/s';
+            return (n / 1048576).toFixed(1) + ' MB/s';
+          }
+          function fmtTime(t) { return new Date(Number(t)).toLocaleString(); }
+
+          async function loadAll() {
+            self.value = await req('/api/self');
+            const st = await req('/api/settings');
+            Object.assign(form, st);
+            form.adminPasswordSet = !!st.adminPasswordSet;
+            stats.value = await req('/api/stats');
+            shares.value = await req('/api/shares');
+            devices.value = await req('/api/devices');
+            // 设备指纹
+            try {
+              const r = await fetch(base + '/api/self', { headers: headers() });
+              fingerprint.value = (await r.json()).fingerprint || '';
+            } catch (e) {}
+            // 会话二维码
+            chatUrl.value = base + '/chat';
+            try {
+              const q = await req('/api/chat/qrcode?url=' + encodeURIComponent(chatUrl.value));
+              chatQr.value = q.dataUrl;
+            } catch (e) {}
+          }
+          async function loadLogs() { logs.value = await req('/api/logs'); }
+
+          // ---------- 登录 ----------
+          function showLogin(hint) {
+            document.getElementById('login').style.display = 'block';
+            document.getElementById('app').style.display = 'none';
+            if (hint) document.getElementById('loginHint').textContent = hint;
+            fetch(base + '/api/admin/status').then((r) => r.json()).then((s) => {
+              document.getElementById('loginHint').textContent = s.passwordSet
+                ? '此设备为远程访问，请输入管理密码登录'
+                : '本服务尚未设置管理密码：请先在服务器本机打开 /admin 设置管理密码，之后才能远程登录';
+            }).catch(() => {});
+          }
+          async function doLogin() {
+            const pwd = document.getElementById('loginPwd').value;
+            try {
+              const r = await fetch(base + '/api/admin/login', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pwd }),
+              });
+              const d = await r.json();
+              if (!r.ok) return toast(d.error === 'wrong_password' ? '密码错误' : '登录失败：' + d.error, 'err');
+              if (d.token) localStorage.setItem(TOKEN_KEY, d.token);
+              await boot();
+            } catch (e) { toast('登录失败：' + e.message, 'err'); }
+          }
+          function logout() { localStorage.removeItem(TOKEN_KEY); location.reload(); }
+
+          // ---------- 共享 ----------
+          function openShareModal(s) {
+            Object.assign(shareForm, { id: s ? s.id : '', name: s ? s.name : '', path: s ? s.path : '', permission: s ? s.permission : 'read', password: '' });
+            shareModal.value = true;
+          }
+          async function saveShare() {
+            try {
+              const body = { name: shareForm.name, path: shareForm.path, permission: shareForm.permission };
+              if (shareForm.password) body.password = shareForm.password;
+              if (shareForm.id) {
+                await req('/api/shares/' + shareForm.id, { method: 'PUT', body: JSON.stringify(body) });
+              } else {
+                await req('/api/shares', { method: 'POST', body: JSON.stringify(body) });
+              }
+              shareModal.value = false;
+              shares.value = await req('/api/shares');
+              toast('已保存', 'ok');
+            } catch (e) { toast('保存失败：' + e.message, 'err'); }
+          }
+          async function toggleShare(s) {
+            await req('/api/shares/' + s.id + (s.enabled ? '/stop' : '/start'), { method: 'POST' });
+            shares.value = await req('/api/shares');
+          }
+          async function removeShare(s) {
+            if (!confirm('删除共享「' + s.name + '」？（不删除文件本身）')) return;
+            await req('/api/shares/' + s.id, { method: 'DELETE' });
+            shares.value = await req('/api/shares');
+            toast('已删除', 'ok');
+          }
+          async function showQr(s) {
+            const d = await req('/api/shares/' + s.id + '/qrcode');
+            qrUrl.value = d.dataUrl;
+            qrLink.value = base + '/s/' + s.id;
+          }
+
+          // ---------- 设备 ----------
+          async function discover() { await req('/api/devices/discover', { method: 'POST' }); toast('已发起探测', 'ok'); setTimeout(() => refreshDevices(), 1500); }
+          async function refreshDevices() { devices.value = await req('/api/devices'); }
+          async function trust(d, v) { await req('/api/devices/' + d.device_id + '/trust', { method: 'POST', body: JSON.stringify({ value: v }) }); refreshDevices(); }
+          async function blacklist(d, v) { await req('/api/devices/' + d.device_id + '/blacklist', { method: 'POST', body: JSON.stringify({ value: v }) }); refreshDevices(); }
+          async function doPing(d) { const r = await req('/api/devices/' + d.device_id + '/ping'); ping.value[d.device_id] = r.ms; }
+          async function connectManual() {
+            try {
+              await req('/api/devices/connect', { method: 'POST', body: JSON.stringify({ host: connectForm.host, port: connectForm.port || undefined }) });
+              connectShow.value = false; refreshDevices(); toast('已连接', 'ok');
+            } catch (e) { toast('连接失败：' + e.message, 'err'); }
+          }
+
+          // ---------- 日志 ----------
+          async function clearLogs() { if (!confirm('清空全部日志？')) return; await req('/api/logs', { method: 'DELETE' }); loadLogs(); }
+
+          // ---------- 设置 ----------
+          async function saveSettings() {
+            try {
+              const patch = { ...form };
+              delete patch.adminPasswordSet; delete patch.httpPort; delete patch.udpPort; delete patch.localIp;
+              // 端口修改走独立字段
+              if (Number(form.httpPort) !== self.value.port) patch.httpPort = Number(form.httpPort);
+              await req('/api/settings', { method: 'PUT', body: JSON.stringify(patch) });
+              toast('已保存', 'ok');
+              loadAll();
+            } catch (e) { toast('保存失败：' + e.message, 'err'); }
+          }
+          async function savePassword() {
+            if (pwForm.next.length < 4) return toast('新密码至少 4 位', 'err');
+            if (pwForm.next !== pwForm.next2) return toast('两次输入不一致', 'err');
+            try {
+              await req('/api/admin/password', {
+                method: 'POST',
+                headers: token() ? {} : { 'x-admin-token': '' },
+                body: JSON.stringify({ oldPassword: pwForm.old || undefined, newPassword: pwForm.next }),
+              });
+              pwShow.value = false; pwForm.old = pwForm.next = pwForm.next2 = '';
+              toast('管理密码已保存', 'ok'); loadAll();
+            } catch (e) { toast('保存失败：' + (e.message === 'wrong_password' ? '旧密码错误' : e.message), 'err'); }
+          }
+
+          async function boot() {
+            try {
+              await loadAll();
+              document.getElementById('login').style.display = 'none';
+              document.getElementById('app').style.display = 'block';
+              remote.value = !!token();
+              loadLogs();
+            } catch (e) {
+              if (e.message !== 'unauthorized') showLogin('连接失败：' + e.message);
+            }
+          }
+          onMounted(boot);
+
+          return {
+            tab, tabs, remote, self, fingerprint, stats, shares, devices, ping, logs, form,
+            shareModal, shareForm, qrUrl, qrLink, connectShow, connectForm, pwShow, pwForm, chatQr, chatUrl, base,
+            doLogin, logout, openShareModal, saveShare, toggleShare, removeShare, showQr,
+            discover, trust, blacklist, doPing, connectManual, loadLogs, clearLogs, saveSettings, savePassword,
+            fmtSize, fmtSpeed, fmtTime,
+          };
+        },
+      }).mount('#app');
+    </script>
+  </body>
+</html>

@@ -189,6 +189,9 @@ class LanFileShare extends require('events').EventEmitter {
 
     app.get('/', (req, res) => res.type('html').send(this._rootPageHtml()));
 
+    // 管理端（/admin 页面 + /api 管理路由鉴权）—— 必须先于 registerApi 挂载
+    require('./admin').register(this);
+
     registerApi(this);
     this.chat = new ChatManager(this);
     this.chat.register();
@@ -492,7 +495,9 @@ class LanFileShare extends require('events').EventEmitter {
 
   /* ---------------- 设置 ---------------- */
   getSettings() {
-    return { ...this.settings, httpPort: this.httpPort, udpPort: this.udpPort, localIp: this.localIp };
+    // adminPasswordHash 不对外暴露（WS 广播/快照都会带上 settings）
+    const { adminPasswordHash, ...rest } = this.settings;
+    return { ...rest, httpPort: this.httpPort, udpPort: this.udpPort, localIp: this.localIp, adminPasswordSet: !!adminPasswordHash };
   }
 
   updateSettings(patch = {}) {
@@ -594,13 +599,37 @@ class LanFileShare extends require('events').EventEmitter {
 
   _rootPageHtml() {
     const shares = this.listShares()
-      .map((s) => `<li><a href="/s/${s.id}">${s.name}</a> — ${s.path} ${s.enabled ? '🟢' : '🔴'}</li>`)
+      .map((s) => {
+        const qs = s.password ? '?pwd=' : '';
+        return `<div class="card"><div class="card-head"><span class="dot ${s.enabled ? 'on' : 'off'}"></span>
+          <a href="/s/${s.id}${qs}">${s.name}</a><span class="perm">${s.permission === 'write' ? '可写' : s.permission === 'admin' ? '管理' : '只读'}${s.password ? ' · 密码' : ''}</span></div>
+          <div class="path">${s.path}</div></div>`;
+      })
       .join('');
-    return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>局域网文件共享</title>
-      <style>body{font-family:system-ui;max-width:720px;margin:40px auto;padding:0 16px}li{margin:6px 0}a{color:#2563eb}</style></head>
-      <body><h1>局域网文件共享平台</h1><p>本机地址：http://${this.localIp}:${this.httpPort}</p>
-      <h3>已共享文件夹</h3><ul>${shares || '<li>暂无</li>'}</ul>
-      <p><a href="/api/self">查看本机信息(JSON)</a></p></body></html>`;
+    return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>局域网文件共享</title><style>
+      :root{--bg:#0f1115;--panel:#1a1d24;--line:#2a2e38;--text:#e6e8ec;--muted:#9aa0aa;--accent:#4f8cff}
+      *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+      .wrap{max-width:760px;margin:0 auto;padding:32px 20px}h1{font-size:22px;margin:0 0 4px}.sub{color:var(--muted);font-size:14px;margin-bottom:24px}
+      .entry{display:flex;gap:12px;margin-bottom:28px;flex-wrap:wrap}
+      .entry a{flex:1;min-width:200px;display:block;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;text-decoration:none;color:var(--text)}
+      .entry a:hover{border-color:var(--accent)}.entry b{display:block;font-size:15px;margin-bottom:4px;color:var(--accent)}
+      .entry span{font-size:13px;color:var(--muted)}
+      h3{font-size:15px;color:var(--muted);margin:0 0 12px}
+      .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin-bottom:10px}
+      .card-head{display:flex;align-items:center;gap:8px}.card-head a{color:var(--text);text-decoration:none;font-size:15px}
+      .dot{width:8px;height:8px;border-radius:50%}.dot.on{background:#36c275}.dot.off{background:#ff5d5d}
+      .perm{margin-left:auto;font-size:12px;color:var(--muted)}.path{font-size:12px;color:var(--muted);margin-top:6px;word-break:break-all}
+      .empty{color:var(--muted);font-size:14px}</style></head>
+      <body><div class="wrap"><h1>局域网文件共享平台</h1>
+      <div class="sub">本机地址：http://${this.localIp}:${this.httpPort}</div>
+      <div class="entry">
+        <a href="/chat"><b>💬 统一会话</b><span>所有设备同框聊天 · 传文件 · 音视频通话</span></a>
+        <a href="/admin"><b>🛠 管理控制台</b><span>共享 / 设备 / 日志 / 设置（本机免登录）</span></a>
+      </div>
+      <h3>共享文件夹</h3>
+      ${shares || '<div class="empty">暂无共享 — 请在桌面客户端或管理控制台添加</div>'}
+      </div></body></html>`;
   }
 
   async stop() {
