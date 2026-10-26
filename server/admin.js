@@ -164,6 +164,69 @@ function register(ctx) {
       res.status(500).json({ ok: false, summary: '自检执行失败：' + e.message, checks: [] });
     }
   });
+
+  // ---- 存储目录浏览（NAS 场景无系统目录选择器，供管理台「浏览选择」使用） ----
+
+  const normPath = (p) => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '') || '/';
+  const isAbs = (p) => path.isAbsolute(p) || /^[a-zA-Z]:/.test(p);
+
+  // 可选根目录：fnOS 授权目录（TRIM_DATA_ACCESSIBLE_PATHS）→ 存储卷 /volN → 通用目录 → Windows 盘符
+  app.get('/api/storage/roots', (req, res) => {
+    const roots = [];
+    const seen = new Set();
+    const push = (raw, label) => {
+      const p = normPath(raw);
+      try {
+        if (!isAbs(p) || seen.has(p)) return;
+        const st = fs.statSync(p);
+        if (!st.isDirectory()) return;
+        fs.accessSync(p, fs.constants.R_OK);
+        seen.add(p);
+        roots.push({ path: p, label: label || p });
+      } catch (e) { /* 无权限或不存在，跳过 */ }
+    };
+    // fnOS 应用被授权访问的目录（用户在系统「应用设置-授权目录」里勾选）
+    const accessible = process.env.TRIM_DATA_ACCESSIBLE_PATHS || '';
+    for (const seg of accessible.split(/[;:]/)) {
+      if (seg && seg.trim().startsWith('/')) push(seg.trim(), '已授权 ' + seg.trim());
+    }
+    // fnOS 存储卷
+    for (let i = 1; i <= 9; i++) {
+      const vol = `/vol${i}`;
+      if (!fs.existsSync(vol)) continue;
+      push(vol, `存储卷 ${i}`);
+    }
+    // 通用 Linux/mac 目录
+    for (const d of ['/home', '/media', '/mnt']) push(d, null);
+    // Windows 盘符
+    if (process.platform === 'win32') {
+      for (let i = 67; i <= 90; i++) {
+        const letter = String.fromCharCode(i);
+        push(`${letter}:`, `${letter}: 盘`);
+      }
+    }
+    res.json({ ok: true, isNas: !!process.env.TRIM_APPDEST, roots });
+  });
+
+  // 列出某目录下的子目录（只读、仅目录、滤隐藏项）
+  app.get('/api/storage/list', (req, res) => {
+    const p = normPath(req.query.path);
+    if (!isAbs(p) || p.includes('../')) return res.status(400).json({ error: 'invalid_path' });
+    try {
+      const st = fs.statSync(p);
+      if (!st.isDirectory()) return res.status(400).json({ error: 'not_directory' });
+      fs.accessSync(p, fs.constants.R_OK);
+      const dirs = fs.readdirSync(p, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+        .slice(0, 500)
+        .map((e) => ({ name: e.name, path: normPath(path.join(p, e.name)) }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+      const parent = path.dirname(p).replace(/\\/g, '/');
+      res.json({ ok: true, path: p, parent: parent === p ? null : normPath(parent), dirs });
+    } catch (e) {
+      res.status(400).json({ error: 'list_failed', message: e.message });
+    }
+  });
 }
 
 module.exports = { register, adminAuth, isLoopback };

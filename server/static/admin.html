@@ -45,6 +45,9 @@
       .modal label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 5px; }
       .modal input, .modal select { width: 100%; }
       .modal .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+      .diritem { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; border-bottom: 1px solid var(--line); font-size: 14px; }
+      .diritem:hover { background: rgba(79,140,255,.08); }
+      .diritem:last-child { border-bottom: none; }
       #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line);
         border-radius: 10px; padding: 10px 18px; font-size: 14px; display: none; z-index: 50; }
       #toast.ok { border-color: var(--green); } #toast.err { border-color: var(--red); }
@@ -256,11 +259,39 @@
       <div class="box">
         <h3>{{ shareForm.id ? '编辑共享' : '添加共享' }}</h3>
         <label>名称</label><input v-model="shareForm.name" placeholder="如 项目文档" />
-        <label>服务器上的路径</label><input v-model="shareForm.path" placeholder="如 D:\docs 或 /vol1/1000/docs" />
+        <label>服务器上的路径</label>
+        <div class="row" style="gap:8px">
+          <input v-model="shareForm.path" placeholder="如 D:\docs 或 /vol1/1000/docs" style="flex:1" />
+          <button @click="openDirBrowser">📁 浏览</button>
+        </div>
         <label>权限</label>
         <select v-model="shareForm.permission"><option value="read">只读</option><option value="write">可写</option><option value="admin">管理</option></select>
         <label>访问密码（留空则不设防）</label><input v-model="shareForm.password" type="password" placeholder="留空表示不修改/清除" />
         <div class="acts"><button @click="shareModal = false">取消</button><button class="primary" @click="saveShare">保存</button></div>
+      </div>
+    </div>
+
+    <!-- 目录浏览器弹窗 -->
+    <div class="modal" v-if="dirBrowser.open">
+      <div class="box" style="min-width:min(560px,92vw)">
+        <h3>选择要共享的目录</h3>
+        <div class="small muted" style="word-break:break-all;margin-bottom:8px">当前：{{ dirBrowser.path || '（选择一个起始位置）' }}</div>
+        <div v-if="dirBrowser.error" class="small" style="color:#ff7d7d;margin-bottom:8px">{{ dirBrowser.error }}</div>
+        <div style="max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:8px">
+          <div v-if="dirBrowser.path && dirBrowser.parent !== null" class="diritem" @click="navDir(dirBrowser.parent)">↩️ 返回上一级</div>
+          <div v-for="r in dirBrowser.roots" v-if="!dirBrowser.path" :key="r.path" class="diritem" @click="navDir(r.path)">
+            <b>{{ r.label }}</b><span class="small muted" style="margin-left:8px">{{ r.path }}</span>
+          </div>
+          <div v-for="d in dirBrowser.dirs" :key="d.path" class="diritem">
+            <span style="flex:1;cursor:pointer" @click="navDir(d.path)">📂 {{ d.name }}</span>
+            <button class="small" @click="chooseDir(d.path)">选这个</button>
+          </div>
+          <div v-if="dirBrowser.path && !dirBrowser.dirs.length && !dirBrowser.loading" class="small muted" style="padding:12px">此目录下没有子目录 — 可直接选当前目录</div>
+        </div>
+        <div class="acts">
+          <button v-if="dirBrowser.path" @click="chooseDir(dirBrowser.path)">选择当前目录</button>
+          <button @click="dirBrowser.open = false">取消</button>
+        </div>
       </div>
     </div>
 
@@ -533,10 +564,41 @@
           }
           onMounted(boot);
 
+          // ---- 目录浏览器（NAS 场景无系统选择器，走 storage API 导航） ----
+          const dirBrowser = reactive({ open: false, loading: false, error: '', roots: [], path: '', parent: null, dirs: [] });
+          async function openDirBrowser() {
+            dirBrowser.open = true; dirBrowser.error = ''; dirBrowser.roots = [];
+            dirBrowser.path = ''; dirBrowser.parent = null; dirBrowser.dirs = [];
+            try {
+              const r = await req('/api/storage/roots');
+              dirBrowser.roots = r.roots || [];
+              if (!dirBrowser.roots.length) dirBrowser.error = r.isNas
+                ? '未找到可访问目录 — 请在 fnOS「应用设置 → 授权目录」中给本应用授权存储空间'
+                : '未找到可浏览的目录，请手动输入路径';
+            } catch (e) { dirBrowser.error = '读取目录失败：' + e.message; }
+          }
+          async function navDir(p) {
+            dirBrowser.loading = true; dirBrowser.error = '';
+            try {
+              const r = await req('/api/storage/list?path=' + encodeURIComponent(p));
+              dirBrowser.path = r.path; dirBrowser.parent = r.parent; dirBrowser.dirs = r.dirs;
+            } catch (e) {
+              dirBrowser.error = e.message === 'list_failed'
+                ? '无权限访问该目录（可在 fnOS 应用设置中授权存储空间后重试）'
+                : '打开目录失败：' + e.message;
+            } finally { dirBrowser.loading = false; }
+          }
+          function chooseDir(p) {
+            shareForm.path = p;
+            dirBrowser.open = false;
+            toast('已选择：' + p);
+          }
+
           return {
             tab, tabs, remote, self, fingerprint, stats, shares, devices, ping, logs, form,
             shareModal, shareForm, qrUrl, qrLink, connectShow, connectForm, pwShow, pwForm, chatQr, chatUrl, base,
             runtimeLogs, runtimeAuto, diagResult, diagRunning, updateAvail,
+            dirBrowser, openDirBrowser, navDir, chooseDir,
             doLogin, logout, openShareModal, saveShare, toggleShare, removeShare, showQr,
             discover, trust, blacklist, doPing, connectManual, loadLogs, clearLogs, saveSettings, savePassword,
             loadRuntime, toggleRuntimeAuto, runDiag,

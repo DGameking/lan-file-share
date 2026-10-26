@@ -892,24 +892,26 @@ class LanFileShare extends require('events').EventEmitter {
       :root{--bg:#0f1115;--panel:#1a1d24;--line:#2a2e38;--text:#e6e8ec;--muted:#9aa0aa;--accent:#4f8cff}
       *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
       .wrap{max-width:760px;margin:0 auto;padding:32px 20px}h1{font-size:22px;margin:0 0 4px}.sub{color:var(--muted);font-size:14px;margin-bottom:24px}
+      .sub b{color:var(--text);letter-spacing:1px}
       .entry{display:flex;gap:12px;margin-bottom:28px;flex-wrap:wrap}
       .entry a{flex:1;min-width:200px;display:block;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;text-decoration:none;color:var(--text)}
       .entry a:hover{border-color:var(--accent)}.entry b{display:block;font-size:15px;margin-bottom:4px;color:var(--accent)}
       .entry span{font-size:13px;color:var(--muted)}
-      h3{font-size:15px;color:var(--muted);margin:0 0 12px}
+      h3{font-size:15px;color:var(--muted);margin:0 0 12px;display:flex;align-items:center}
+      h3 a{margin-left:auto;font-size:13px;color:var(--accent);text-decoration:none}
       .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin-bottom:10px}
       .card-head{display:flex;align-items:center;gap:8px}.card-head a{color:var(--text);text-decoration:none;font-size:15px}
       .dot{width:8px;height:8px;border-radius:50%}.dot.on{background:#36c275}.dot.off{background:#ff5d5d}
       .perm{margin-left:auto;font-size:12px;color:var(--muted)}.path{font-size:12px;color:var(--muted);margin-top:6px;word-break:break-all}
-      .empty{color:var(--muted);font-size:14px}</style></head>
+      .empty{color:var(--muted);font-size:14px}.empty a{color:var(--accent)}</style></head>
       <body><div class="wrap"><h1>局域网文件共享平台</h1>
-      <div class="sub">本机地址：http://${this.localIp}:${this.httpPort}</div>
+      <div class="sub">本机地址：http://${this.localIp}:${this.httpPort}${this.fingerprint ? ' · 识别码 <b>' + ('LF-' + this.fingerprint.slice(0, 4) + '-' + this.fingerprint.slice(4, 8)).toUpperCase() + '</b>' : ''}</div>
       <div class="entry">
         <a href="/chat"><b>💬 统一会话</b><span>所有设备同框聊天 · 传文件 · 音视频通话</span></a>
         <a href="/admin"><b>🛠 管理控制台</b><span>共享 / 设备 / 日志 / 设置（本机免登录）</span></a>
       </div>
-      <h3>共享文件夹</h3>
-      ${shares || '<div class="empty">暂无共享 — 请在桌面客户端或管理控制台添加</div>'}
+      <h3>共享文件夹 <a href="/admin">＋ 去管理台添加</a></h3>
+      ${shares || '<div class="empty">暂无共享 — <a href="/admin">打开管理控制台</a>，点「添加共享」并浏览选择 NAS 目录</div>'}
       </div><script>if('serviceWorker' in navigator && window.isSecureContext){navigator.serviceWorker.register('/sw.js').catch(function(){});}</script></body></html>`;
   }
 
