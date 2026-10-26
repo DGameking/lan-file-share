@@ -24,7 +24,7 @@ jobs:
         env:
           # 未签名构建：跳过身份查找，产物需右键打开（或设置"任何来源"）
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --mac --x64 --arm64
+        run: npx electron-builder --mac --x64 --arm64 --publish never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
