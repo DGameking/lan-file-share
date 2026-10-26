@@ -51,13 +51,11 @@
     "win": {
       "target": ["nsis", "zip"],
       "executableName": "LanFileShare",
+      "artifactName": "LanFileShare-Portable-${version}-${arch}.${ext}",
       "sign": "./scripts/noop-sign.js"
     },
     "nsis": {
       "artifactName": "LanFileShare-Setup-${version}-${arch}.${ext}"
-    },
-    "zip": {
-      "artifactName": "LanFileShare-Portable-${version}-${arch}.${ext}"
     },
     "mac": {
       "target": ["dmg", "zip"],
