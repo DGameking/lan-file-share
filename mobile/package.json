@@ -1,0 +1,17 @@
+{
+  "name": "lanfileshare-mobile",
+  "private": true,
+  "version": "1.9.7",
+  "description": "局域网文件共享 Android/iOS 客户端壳（Capacitor）",
+  "scripts": {
+    "cap": "cap",
+    "android": "cap android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.4.4",
+    "@capacitor/core": "^7.4.4"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.4.4"
+  }
+}

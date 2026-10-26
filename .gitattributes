@@ -4,3 +4,8 @@ fnos-app/manifest text eol=lf
 fnos-app/config/* text eol=lf
 fnos-app/wizard/* text eol=lf
 *.sh text eol=lf
+# 安卓 CI：gradlew 必须保持 LF，否则 Gradle wrapper 在 Linux 上执行报错
+mobile/android/gradlew text eol=lf
+mobile/android/gradle/wrapper/* text eol=lf
+mobile/android/*.gradle text eol=lf
+mobile/android/*.properties text eol=lf

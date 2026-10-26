@@ -1,5 +1,5 @@
 appname               = lanfileshare
-version               = 1.9.6
+version               = 1.9.7
 display_name          = 局域网文件共享
 desc                  = 局域网多端文件共享与会话平台：设备自动发现、文件夹共享、统一会话框（聊天 / 文件 / 文件夹 / 音视频通话），数据不出局域网。
 maintainer            = WorkBuddy Team

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#2563eb" />
+<title>局域网共享</title>
+<style>
+:root{--bg:#f3f5f9;--panel:#fff;--line:#e4e8f0;--txt:#1f2937;--muted:#6b7280;--accent:#2563eb}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--txt);display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:28px 22px;width:100%;max-width:380px;box-shadow:0 10px 30px rgba(0,0,0,.06)}
+.logo{width:72px;height:72px;border-radius:18px;margin:0 auto 14px;display:flex;align-items:center;justify-content:center;font-size:36px;background:#eff6ff}
+h1{font-size:18px;text-align:center;margin-bottom:4px}
+.sub{font-size:13px;color:var(--muted);text-align:center;margin-bottom:22px;line-height:1.6}
+label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
+input{width:100%;border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:15px;margin-bottom:14px}
+input:focus{outline:none;border-color:var(--accent)}
+button{width:100%;border:0;border-radius:10px;padding:13px;font-size:15px;font-weight:600;background:var(--accent);color:#fff;cursor:pointer}
+button:active{opacity:.85}
+.tip{font-size:12px;color:var(--muted);margin-top:16px;line-height:1.7}
+.tip b{color:var(--txt)}
+.err{color:#dc2626;font-size:12px;min-height:16px;margin-bottom:8px;text-align:center}
+.hint{display:none;background:#eff6ff;border-radius:10px;padding:10px 12px;font-size:12px;color:#1e40af;margin-bottom:14px;line-height:1.7}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">📡</div>
+  <h1>局域网共享</h1>
+  <div class="sub">连接同一局域网内运行「局域网文件共享」的电脑或 NAS</div>
+  <div class="hint" id="hint"></div>
+  <label>服务器地址</label>
+  <input id="url" placeholder="例如 http://192.168.1.20:8080" autocapitalize="off" autocorrect="off" spellcheck="false" />
+  <div class="err" id="err"></div>
+  <button id="go">连 接</button>
+  <div class="tip">
+    <b>如何获取地址？</b><br>
+    电脑端：主界面顶部显示 <b>http://IP:端口</b>，或管理控制台「连接」页有二维码。<br>
+    NAS 端：应用详情页显示访问地址。<br>
+    两台设备必须处于<b>同一局域网</b>。
+  </div>
+</div>
+<script>
+(function(){
+  var input = document.getElementById('url');
+  var err = document.getElementById('err');
+  var hint = document.getElementById('hint');
+  var saved = localStorage.getItem('server_url');
+  if (saved) input.value = saved;
+
+  function normalize(v){
+    v = (v || '').trim().replace(/\/+$/, '');
+    if (!v) return '';
+    if (!/^https?:\/\//i.test(v)) v = 'http://' + v;
+    return v;
+  }
+
+  function connect(){
+    var url = normalize(input.value);
+    err.textContent = '';
+    if (!url) { err.textContent = '请输入服务器地址'; return; }
+    var btn = document.getElementById('go');
+    btn.textContent = '连接中…';
+    // 探测 /api/self（2.5s 超时）
+    var ctrl = new AbortController();
+    var t = setTimeout(function(){ ctrl.abort(); }, 2500);
+    fetch(url + '/api/self', { signal: ctrl.signal })
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(info){
+        clearTimeout(t);
+        if (!info || (!info.deviceName && !info.device_name)) throw new Error('not_target');
+        localStorage.setItem('server_url', url);
+        localStorage.setItem('server_name', info.deviceName || info.device_name || '');
+        location.href = url + '/chat';
+      })
+      .catch(function(e){
+        clearTimeout(t);
+        btn.textContent = '连 接';
+        if (e.message === 'not_target') {
+          err.textContent = '该地址不是「局域网文件共享」服务';
+        } else {
+          err.textContent = '无法连接，请检查地址与网络';
+          hint.style.display = 'block';
+          hint.innerHTML = '排查建议：<br>1. 确认电脑/NAS 端软件正在运行<br>2. 确认手机与服务器连的是<b>同一个 Wi-Fi</b><br>3. 地址格式：<b>http://IP:端口</b>（端口默认 8080）<br>4. 部分路由器开启了「AP 隔离」，需在路由器关闭';
+        }
+      });
+  }
+
+  document.getElementById('go').addEventListener('click', connect);
+  input.addEventListener('keydown', function(e){ if (e.key === 'Enter') connect(); });
+})();
+</script>
+</body>
+</html>

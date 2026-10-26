@@ -51,11 +51,15 @@ macOS 15+ 对未签名应用更严格，可能直接把 App 扔进废纸篓（�
 
 ## 📱 手机 / 平板怎么用（Android / iOS）
 
-无需专用 App —— 接收方用手机浏览器打开 `http://服务IP:端口/chat` 即可：聊天、发文件、图片视频预览、音视频通话全功能可用，并可从根页或管理控制台扫码直达。
+三种方式，按需选择：
 
-- **Android（Chrome/Edge）**：菜单 → **“添加到主屏幕”**，即可像 App 一样全屏使用（开启 HTTPS 后体验更完整）；
-- **iOS（Safari）**：分享 → **“添加到主屏幕”**；
-- 原生 App（Capacitor 打包 Android APK / iOS TestFlight）在路线图中，iOS 上架需 Apple 开发者账号。
+1. **浏览器直开（全平台通用）**：手机浏览器打开 `http://服务IP:端口/chat` 即可：聊天、发文件、图片视频预览、音视频通话全功能可用，并可从根页或管理控制台扫码直达。
+2. **Android App（v1.9.7 起）**：下载 Release 里的 `LanFileShare-<版本>-android.apk` 安装（系统会提示"未知来源"，允许即可）。打开后填一次服务器地址（如 `http://192.168.1.20:8080`），连接记忆在本地，之后点开即进会话。
+3. **PWA 添加到主屏幕（iOS 推荐）**：
+   - **iOS（Safari）**：打开 `/chat` → 分享 → **"添加到主屏幕"**，全屏 App 化使用（页面内会有一次性安装引导）；
+   - **Android（Chrome/Edge）**：菜单 → **"添加到主屏幕"**。
+
+> iOS 原生 App 上架 App Store 需要 Apple 开发者账号（$99/年）+ macOS 签名环境；PWA 是当前 iOS 的完整形态。`mobile/` 目录为 Capacitor 工程，iOS 壳可在具备条件时用 `npx cap add ios` 生成。
 
 ## 核心特性（对齐 PRD）
 

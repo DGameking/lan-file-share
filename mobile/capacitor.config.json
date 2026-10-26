@@ -1,0 +1,11 @@
+{
+  "appId": "cn.dgameking.lanfileshare",
+  "appName": "局域网共享",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": true
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}
