@@ -7,6 +7,6 @@ maintainer_url        = https://github.com/DGameking/lan-file-share
 source                = thirdparty
 platform              = x86
 desktop_uidir         = ui
-desktop_applaunchname = LanFileShare.Application
+desktop_applaunchname = lanfileshare.main
 ctl_stop              = true
 service_port          = 18180

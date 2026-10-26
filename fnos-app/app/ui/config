@@ -1,6 +1,6 @@
 {
   ".url": {
-    "LanFileShare.Application": {
+    "lanfileshare.main": {
       "title": "局域网文件共享",
       "icon": "images/icon_{0}.png",
       "type": "iframe",
