@@ -27,8 +27,8 @@ const assets = [
   { name: 'LanFileShare-Setup-1.9.0-x64.exe', url: 'u1', size: 100 },
   { name: 'LanFileShare-Setup-1.9.0-arm64.exe', url: 'u2', size: 90 },
   { name: 'SHA256SUMS-win-1.9.0.txt', url: 'u3', size: 5 },
-  { name: 'LanFileShare-1.9.0-arm64.dmg', url: 'u4', size: 80 },
-  { name: 'LanFileShare-1.9.0-x86_64.AppImage', url: 'u5', size: 85 },
+  { name: 'LanFileShare-mac-1.9.0-arm64.dmg', url: 'u4', size: 80 },
+  { name: 'LanFileShare-linux-1.9.0-x86_64.AppImage', url: 'u5', size: 85 },
 ];
 const m1 = matchAsset(assets, { platform: 'win32', arch: 'x64', version: '1.9.0' });
 const m2 = matchAsset(assets, { platform: 'win32', arch: 'arm64', version: '1.9.0' });

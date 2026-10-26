@@ -49,7 +49,10 @@
       "buildResources": "build"
     },
     "win": {
-      "target": ["nsis", "zip"],
+      "target": [
+        "nsis",
+        "zip"
+      ],
       "executableName": "LanFileShare",
       "artifactName": "LanFileShare-Portable-${version}-${arch}.${ext}",
       "sign": "./scripts/noop-sign.js"
@@ -58,13 +61,15 @@
       "artifactName": "LanFileShare-Setup-${version}-${arch}.${ext}"
     },
     "mac": {
-      "target": ["dmg", "zip"],
-      "artifactName": "LanFileShare-${version}-${arch}.${ext}",
+      "target": [
+        "dmg"
+      ],
+      "artifactName": "LanFileShare-mac-${version}-${arch}.${ext}",
       "category": "public.app-category.utilities"
     },
     "linux": {
       "target": "AppImage",
-      "artifactName": "LanFileShare-${version}-${arch}.${ext}",
+      "artifactName": "LanFileShare-linux-${version}-${arch}.${ext}",
       "category": "Utility"
     }
   }

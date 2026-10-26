@@ -39,8 +39,8 @@ async function checkLatest({ current }) {
 /** 按发布命名规则匹配当前平台/架构的安装包资产 */
 function assetNameFor(platform, arch, version) {
   if (platform === 'win32') return `LanFileShare-Setup-${version}-${arch === 'arm64' ? 'arm64' : 'x64'}.exe`;
-  if (platform === 'darwin') return `LanFileShare-${version}-${arch === 'arm64' ? 'arm64' : 'x64'}.dmg`;
-  if (platform === 'linux') return `LanFileShare-${version}-${arch === 'arm64' ? 'arm64' : 'x86_64'}.AppImage`;
+  if (platform === 'darwin') return `LanFileShare-mac-${version}-${arch === 'arm64' ? 'arm64' : 'x64'}.dmg`;
+  if (platform === 'linux') return `LanFileShare-linux-${version}-${arch === 'arm64' ? 'arm64' : 'x86_64'}.AppImage`;
   return null;
 }
 
