@@ -47,6 +47,8 @@
       }
 
       .layout { flex: 1; display: flex; min-height: 0; }
+      .default-warn { flex: 0 0 auto; background: rgba(255, 179, 64, .12); border-bottom: 1px solid #ff9f43; color: #ffb340; font-size: 13px; padding: 10px 18px; line-height: 1.6; }
+      .default-warn b { color: #ffd27a; }
       .sidebar {
         width: 184px; flex: 0 0 184px; background: var(--bg-soft);
         border-right: 1px solid var(--border); padding: 12px 10px; overflow-y: auto;
@@ -205,6 +207,10 @@
           <button class="btn ghost sm" @click="logout" v-if="remote">退出</button>
         </div>
       </header>
+
+      <div class="default-warn" v-if="defaultWarn">
+        ⚠️ 当前仍在使用默认管理密码 <b>admin</b>，存在局域网安全风险。请在「⚙ 设置 → 修改管理密码」中尽快更改为自定义密码。
+      </div>
 
       <div class="layout">
         <aside class="sidebar">
@@ -535,6 +541,8 @@
 
           // 启动时静默检查更新（引擎侧 24h 节流）
           const updateAvail = ref(null);
+          // 仍在使用默认管理密码时的告警横幅
+          const defaultWarn = ref(false);
           async function checkUpdateBanner() {
             try {
               const r = await req('/api/update/check?auto=1');
@@ -548,9 +556,17 @@
             document.getElementById('app').style.display = 'none';
             if (hint) document.getElementById('loginHint').textContent = hint;
             fetch(base + '/api/admin/status').then((r) => r.json()).then((s) => {
-              document.getElementById('loginHint').textContent = s.passwordSet
-                ? '此设备为远程访问，请输入管理密码登录'
-                : '本服务尚未设置管理密码：请先在服务器本机打开 /admin 设置管理密码，之后才能远程登录';
+              if (!s.passwordSet) {
+                document.getElementById('loginHint').textContent =
+                  '本服务尚未设置管理密码：请先在服务器本机打开 /admin 设置管理密码，之后才能远程登录';
+              } else if (s.isDefault && s.defaultPassword) {
+                document.getElementById('loginHint').textContent =
+                  '默认管理密码：' + s.defaultPassword + '（首次登录后请尽快在「设置」中修改）';
+                const inp = document.getElementById('loginPwd');
+                if (inp) inp.value = s.defaultPassword;
+              } else {
+                document.getElementById('loginHint').textContent = '此设备为远程访问，请输入管理密码登录';
+              }
             }).catch(() => {});
           }
           async function doLogin() {
@@ -680,6 +696,10 @@
               document.getElementById('login').style.display = 'none';
               document.getElementById('app').style.display = 'flex';
               remote.value = !!token();
+              try {
+                const s = await (await fetch(base + '/api/admin/status')).json();
+                defaultWarn.value = !!(s && s.isDefault);
+              } catch (e) {}
               loadLogs();
             } catch (e) {
               if (e.message !== 'unauthorized') showLogin('连接失败：' + e.message);

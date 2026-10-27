@@ -887,6 +887,7 @@ class LanFileShare extends require('events').EventEmitter {
   }
 
   _rootPageHtml() {
+    const isDefaultPw = !!(this.settings && this.settings.adminPasswordIsDefault);
     const shares = this.listShares()
       .map((s) => {
         const qs = s.password ? '?pwd=' : '';
@@ -913,6 +914,7 @@ class LanFileShare extends require('events').EventEmitter {
       .dot{width:8px;height:8px;border-radius:50%}.dot.on{background:#36c275}.dot.off{background:#ff5d5d}
       .perm{margin-left:auto;font-size:12px;color:var(--muted)}.path{font-size:12px;color:var(--muted);margin-top:6px;word-break:break-all}
       .empty{color:var(--muted);font-size:14px}.empty a{color:var(--accent)}
+      .warnbox{background:rgba(255,179,64,.12);border:1px solid #ff9f43;color:#ffb340;font-size:13px;padding:12px 16px;border-radius:10px;margin-bottom:24px;line-height:1.6}.warnbox b{color:#ffd27a}
       .g-nav{display:flex;gap:6px;margin-bottom:20px}.g-nav a{display:inline-flex;align-items:center;gap:5px;padding:7px 13px;border-radius:9px;font-size:13px;color:var(--muted);text-decoration:none;border:1px solid var(--line);background:var(--panel)}
       .g-nav a:hover{border-color:var(--accent)}.g-nav a.active{background:var(--accent);color:#fff;border-color:var(--accent)}</style></head>
       <body><div class="wrap"><h1>局域网文件共享平台</h1>
@@ -926,6 +928,7 @@ class LanFileShare extends require('events').EventEmitter {
         <a href="/chat"><b>💬 统一会话</b><span>所有设备同框聊天 · 传文件 · 音视频通话</span></a>
         <a href="/admin"><b>🛠 管理控制台</b><span>共享 / 设备 / 日志 / 设置（本机免登录）</span></a>
       </div>
+      ${isDefaultPw ? '<div class="warnbox">⚠️ 管理后台当前使用默认密码 <b>admin</b>。远程（如飞牛 OS）登录时请输入该密码，登录后请尽快在「🛠 管理台 → ⚙ 设置 → 修改管理密码」中更改。</div>' : ''}
       <h3>共享文件夹 <a href="/admin">＋ 去管理台添加</a></h3>
       ${shares || '<div class="empty">暂无共享 — <a href="/admin">打开管理控制台</a>，点「添加共享」并浏览选择 NAS 目录</div>'}
       </div><script>if('serviceWorker' in navigator && window.isSecureContext){navigator.serviceWorker.register('/sw.js').catch(function(){});}</script></body></html>`;

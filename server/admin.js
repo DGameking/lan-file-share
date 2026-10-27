@@ -17,6 +17,36 @@ const path = require('path');
 
 const TOKEN_TTL_MS = 24 * 3600 * 1000;
 
+// 首次启动默认管理密码：仅用于打破「远程无密码 → 永久锁死」的死锁。
+// 远程（如飞牛 OS iframe）访问管理台时，若未设密码会被鉴权中间件一律 401/403，
+// 且设密码接口又要求本机或已持令牌，导致远程管理员永远进不去、也设不了密码。
+// 注入一个可被用户立刻使用的默认密码即可破局；前端会提示尽快修改。
+const DEFAULT_ADMIN_PASSWORD = 'admin';
+
+/**
+ * 首次启动注入默认管理密码，打破死锁。
+ * 仅当 settings 中尚未配置任何 adminPasswordHash 时生效；
+ * 注入后标记 adminPasswordIsDefault，前端据此提示用户尽快修改。
+ */
+function bootstrapDefaultPassword(ctx) {
+  try {
+    if (ctx.settings && !ctx.settings.adminPasswordHash) {
+      ctx.settings.adminPasswordHash = hashPassword(DEFAULT_ADMIN_PASSWORD);
+      ctx.settings.adminPasswordIsDefault = true;
+      ctx.db.setConfig('settings', JSON.stringify(ctx.settings));
+      // 明文落盘，方便飞牛/无显示器环境的管理员找到
+      try {
+        const fp = path.join(ctx.dataDir || '.', 'ADMIN_DEFAULT_PASSWORD.txt');
+        require('fs').writeFileSync(fp,
+          `局域网文件共享 - 管理后台默认密码：${DEFAULT_ADMIN_PASSWORD}\n` +
+          `（仅在本机数据目录首次生成时写入。首次登录后请尽快在「设置 → 修改管理密码」中更改。）\n`,
+          { mode: 0o600 });
+      } catch (e) { /* 非致命 */ }
+      if (ctx.logEvent) ctx.logEvent({ event_type: 'admin_default_password_set', target: 'admin', result: 'success' });
+    }
+  } catch (e) { /* 注入失败不应阻断服务启动 */ }
+}
+
 function isLoopback(ip) {
   if (!ip) return false;
   const v = String(ip).replace(/^::ffff:/, '');
@@ -93,6 +123,9 @@ function register(ctx) {
   } catch (e) {}
   app.get('/admin', (req, res) => res.type('html').send(adminHtml));
 
+  // 首次启动注入默认管理密码，打破远程访问死锁（必须在路由注册前、状态查询可用后执行）
+  bootstrapDefaultPassword(ctx);
+
   // 前端静态资源（Vue 本地文件，无 CDN 依赖）。
   // 注意：fpk 包内 server/ 目录不含 renderer/，必须放在 server/static/vendor 下自包含，
   // 否则 fnOS 安装后 /vendor/vue.global.js 404，整个管理台 SPA 无法初始化（所有按钮失效）。
@@ -139,6 +172,7 @@ function register(ctx) {
       return res.status(400).json({ error: 'password_too_short' });
     }
     ctx.settings.adminPasswordHash = hashPassword(newPassword);
+    ctx.settings.adminPasswordIsDefault = false; // 用户已设自定义密码，清除默认标记
     ctx.db.setConfig('settings', JSON.stringify(ctx.settings));
     ctx.logEvent({ event_type: 'admin_password_changed', ip, target: 'admin', result: 'success' });
     res.json({ ok: true });
@@ -146,7 +180,13 @@ function register(ctx) {
 
   // 查询是否已设置管理密码（供登录页提示，不泄露任何敏感信息）
   app.get('/api/admin/status', (req, res) => {
-    res.json({ passwordSet: hasAdminPassword(ctx) });
+    const isDefault = !!(ctx.settings && ctx.settings.adminPasswordIsDefault);
+    res.json({
+      passwordSet: hasAdminPassword(ctx),
+      isDefault,
+      // 仅当仍在使用默认密码时回显，方便远程/飞牛管理员首次登录；一旦修改即不再返回
+      defaultPassword: isDefault ? DEFAULT_ADMIN_PASSWORD : null,
+    });
   });
 
   // 管理 API 统一鉴权
