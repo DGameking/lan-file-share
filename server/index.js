@@ -18,6 +18,15 @@ const {
   DEFAULT_HTTP_PORT,
   getPrimaryIP,
 } = require('../shared/constants');
+
+/** 读取同仓库 package.json 版本：独立/飞牛运行时据此上报真实版本，而非写死的 '1.0.0'（否则局域网内 NAS 永远显示 1.0.0，与桌面端版本分裂、更新检查失准） */
+function readRepoVersion() {
+  try {
+    const pj = require(path.join(__dirname, '..', 'package.json'));
+    if (pj && typeof pj.version === 'string' && pj.version) return pj.version;
+  } catch (e) {}
+  return null;
+}
 const { shortId } = require('../shared/utils');
 const DeviceManager = require('../discovery/device-manager');
 const UdpDiscovery = require('../discovery/udp-broadcast');
@@ -49,7 +58,7 @@ class LanFileShare extends require('events').EventEmitter {
     this.dbPath = opts.dbPath || path.join(this.dataDir, 'app.db');
     this.deviceName = opts.deviceName || os.hostname();
     this.osType = opts.osType || OS_MAP[process.platform] || 'Unknown';
-    this.version = opts.version || '1.0.0';
+    this.version = opts.version || readRepoVersion() || '1.0.0';
     this.useHttps = !!opts.https;
 
     this.masterKey = null;
