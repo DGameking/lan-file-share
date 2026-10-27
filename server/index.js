@@ -912,9 +912,16 @@ class LanFileShare extends require('events').EventEmitter {
       .card-head{display:flex;align-items:center;gap:8px}.card-head a{color:var(--text);text-decoration:none;font-size:15px}
       .dot{width:8px;height:8px;border-radius:50%}.dot.on{background:#36c275}.dot.off{background:#ff5d5d}
       .perm{margin-left:auto;font-size:12px;color:var(--muted)}.path{font-size:12px;color:var(--muted);margin-top:6px;word-break:break-all}
-      .empty{color:var(--muted);font-size:14px}.empty a{color:var(--accent)}</style></head>
+      .empty{color:var(--muted);font-size:14px}.empty a{color:var(--accent)}
+      .g-nav{display:flex;gap:6px;margin-bottom:20px}.g-nav a{display:inline-flex;align-items:center;gap:5px;padding:7px 13px;border-radius:9px;font-size:13px;color:var(--muted);text-decoration:none;border:1px solid var(--line);background:var(--panel)}
+      .g-nav a:hover{border-color:var(--accent)}.g-nav a.active{background:var(--accent);color:#fff;border-color:var(--accent)}</style></head>
       <body><div class="wrap"><h1>局域网文件共享平台</h1>
       <div class="sub">本机地址：http://${this.localIp}:${this.httpPort}${this.fingerprint ? ' · 识别码 <b>' + ('LF-' + this.fingerprint.slice(0, 4) + '-' + this.fingerprint.slice(4, 8)).toUpperCase() + '</b>' : ''}</div>
+      <div class="g-nav">
+        <a href="/" class="active">🏠 门户</a>
+        <a href="/chat">💬 会话</a>
+        <a href="/admin">🛠 管理台</a>
+      </div>
       <div class="entry">
         <a href="/chat"><b>💬 统一会话</b><span>所有设备同框聊天 · 传文件 · 音视频通话</span></a>
         <a href="/admin"><b>🛠 管理控制台</b><span>共享 / 设备 / 日志 / 设置（本机免登录）</span></a>

@@ -20,6 +20,15 @@
       ::-webkit-scrollbar-track { background: transparent; }
       header { flex: 0 0 auto; padding: 14px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: linear-gradient(180deg, #1a2029 0%, #161a22 100%); }
       header h1 { font-size: 18px; margin: 0; }
+      /* 全局跨页导航（门户/会话/管理台 同框跳转） */
+      .g-nav { display: flex; gap: 6px; margin-left: 4px; }
+      .g-nav a {
+        display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; border-radius: 8px;
+        font-size: 13px; color: var(--muted); text-decoration: none; border: 1px solid transparent;
+        transition: background .12s ease, color .12s ease;
+      }
+      .g-nav a:hover { background: var(--panel); color: var(--text); border-color: var(--line); }
+      .g-nav a.active { background: var(--accent); color: #fff; }
       .crumb { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
       .crumb a { color: var(--accent); cursor: pointer; text-decoration: none; }
       .toolbar { display: flex; gap: 8px; margin-left: auto; align-items: center; flex-wrap: wrap; }
@@ -62,6 +71,11 @@
   <body>
     <header>
       <h1 id="title">📁 共享</h1>
+      <nav class="g-nav">
+        <a href="/">🏠 门户</a>
+        <a href="/chat">💬 会话</a>
+        <a href="/admin">🛠 管理台</a>
+      </nav>
       <div class="crumb" id="crumb"></div>
       <div class="toolbar">
         <button id="refresh">刷新</button>

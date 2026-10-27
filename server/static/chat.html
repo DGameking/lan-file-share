@@ -21,7 +21,7 @@
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--txt);overflow:hidden}
-#app{display:flex;height:100vh}
+#app{display:flex;flex-direction:column;height:100vh}
 /* 侧栏 */
 .side{width:230px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;flex-shrink:0}
 .side h2{font-size:14px;padding:14px 16px 10px;color:var(--muted);font-weight:600}
@@ -41,6 +41,14 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
 .header .t{font-size:15px;font-weight:700}
 .header .sub{font-size:12px;color:var(--muted)}
 .header .sp{flex:1}
+/* 全局跨页导航（门户/会话/管理台 同框跳转） */
+.g-topnav{display:flex;align-items:center;gap:8px;background:var(--panel);border-bottom:1px solid var(--line);padding:8px 14px;flex:0 0 auto}
+.g-topnav .brand{font-weight:700;font-size:14px;margin-right:4px}
+.g-topnav a{display:inline-flex;align-items:center;gap:5px;text-decoration:none;color:var(--muted);font-size:13px;padding:6px 12px;border-radius:8px;border:1px solid transparent;transition:background .12s,color .12s}
+.g-topnav a:hover{background:var(--accent-soft);color:var(--accent)}
+.g-topnav a.active{background:var(--accent);color:#fff}
+.body-row{flex:1;display:flex;min-height:0}
+.m-nav{display:none}
 .btn{border:none;border-radius:10px;padding:8px 14px;font-size:13px;cursor:pointer;background:var(--accent);color:#fff}
 .btn:hover{filter:brightness(1.08)}
 .btn.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
@@ -92,6 +100,9 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
 .m-topbar{display:none}
 @media (max-width:640px){
   .bubble{max-width:84%}
+  .g-topnav{display:none}
+  .m-nav{display:inline-flex;align-items:center;font-size:13px;color:var(--txt);text-decoration:none;padding:5px 9px;border:1px solid var(--line);border-radius:8px}
+  .m-nav:hover{background:var(--accent-soft);color:var(--accent)}
   #app{padding-top:calc(44px + env(safe-area-inset-top,0px))}
   .m-topbar{display:flex;position:fixed;top:0;left:0;right:0;height:calc(44px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) 12px 0;align-items:center;gap:10px;background:var(--panel);border-bottom:1px solid var(--line);z-index:40}
   .m-topbar b{font-size:15px;flex:1}
@@ -118,12 +129,21 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
 <body>
 <div class="m-topbar">
   <b>局域网会话</b>
+  <a class="m-nav" href="/">门户</a>
+  <a class="m-nav" href="/admin">管理台</a>
   <button class="m-btn" id="mMembers">👥 <span id="mCountTop">1</span></button>
 </div>
 <div class="m-mask" id="mMask"></div>
 <div id="iosHint"><span class="x" onclick="this.parentNode.style.display='none'">✕</span>安装到主屏幕：点 Safari 底部 <b>分享</b> 按钮 ⇧ → 选择 <b>「添加到主屏幕」</b>，即可像 App 一样全屏使用。</div>
 <div id="app">
-  <aside class="side">
+  <nav class="g-topnav">
+    <span class="brand">局域网共享</span>
+    <a href="/">🏠 门户</a>
+    <a href="/chat" class="active">💬 会话</a>
+    <a href="/admin">🛠 管理台</a>
+  </nav>
+  <div class="body-row">
+    <aside class="side">
     <h2>会话成员（<span id="mCount">1</span>）</h2>
     <div class="members" id="members"></div>
     <div class="myname">
@@ -156,7 +176,8 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
       </div>
     </div>
   </div>
-</div>
+  </div><!-- /body-row -->
+</div><!-- /#app -->
 
 <div class="callbar" id="callbar" style="display:none">
   <span class="who" id="callWho"></span>

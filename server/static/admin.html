@@ -33,6 +33,19 @@
       .topbar .who { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-dim); }
       .topbar .who b { color: var(--text); font-weight: 500; }
 
+      /* 全局跨页导航：门户/会话/管理台 同框跳转，避免 fnOS 下开新标签回不来 */
+      .topbar .g-nav { display: flex; gap: 6px; margin-left: 14px; }
+      .topbar .g-nav a {
+        display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; border-radius: 8px;
+        font-size: 13px; color: var(--text-dim); text-decoration: none; border: 1px solid transparent;
+        transition: background .12s ease, color .12s ease;
+      }
+      .topbar .g-nav a:hover { background: var(--bg-card); color: var(--text); }
+      .topbar .g-nav a.active {
+        background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dim) 100%);
+        color: #fff; box-shadow: 0 2px 10px rgba(79,140,255,.25);
+      }
+
       .layout { flex: 1; display: flex; min-height: 0; }
       .sidebar {
         width: 184px; flex: 0 0 184px; background: var(--bg-soft);
@@ -180,6 +193,11 @@
     <div id="app">
       <header class="topbar">
         <div class="title">🛠 管理控制台</div>
+        <nav class="g-nav">
+          <a href="/">🏠 门户</a>
+          <a href="/chat">💬 会话</a>
+          <a href="/admin" class="active">🛠 管理台</a>
+        </nav>
         <div class="spacer"></div>
         <div class="who" v-if="self.deviceName">
           <span class="pill" :class="remote ? 'blue' : 'green'">{{ remote ? '远程' : '本机' }}</span>
@@ -214,7 +232,7 @@
               <span class="k">本机名称</span><span>{{ self.deviceName }}</span>
               <span class="k">服务地址</span><span>http://{{ self.host }}:{{ self.port }}</span>
               <span class="k">设备指纹</span><span class="small muted">{{ fingerprint }}</span>
-              <span class="k">快捷入口</span><span><a :href="base + '/chat'" target="_blank">统一会话</a> · <a :href="base + '/'" target="_blank">门户页</a></span>
+              <span class="k">快捷入口</span><span><a href="/chat">统一会话</a> · <a href="/">门户页</a></span>
             </div>
           </section>
 
@@ -281,7 +299,7 @@
                 手机扫码直接进入：</p>
               <div class="qrbox"><img v-if="chatQr" :src="chatQr" alt="会话二维码" /><p class="small muted" v-if="chatQr">{{ chatUrl }}</p></div>
             </div>
-            <div class="toolbar"><a :href="chatUrl" target="_blank"><button class="btn primary">打开会话页面</button></a></div>
+            <div class="toolbar"><a href="/chat"><button class="btn primary">进入会话页面</button></a><a href="/admin"><button class="btn ghost">返回管理台</button></a></div>
           </section>
 
           <!-- 日志 -->
