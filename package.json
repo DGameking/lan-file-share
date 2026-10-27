@@ -1,6 +1,6 @@
 {
   "name": "lan-file-share",
-  "version": "1.9.11",
+  "version": "1.9.12",
   "description": "局域网多端跨系统文件共享平台 - 桌面客户端 (MVP)",
   "main": "main/index.js",
   "author": "WorkBuddy Team",

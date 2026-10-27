@@ -2,8 +2,36 @@
 
 const { app, BrowserWindow, ipcMain, shell, dialog, Menu, clipboard, Notification, globalShortcut } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const LanFileShare = require('../server');
 const TrayManager = require('./tray');
+
+// ---- GPU 容错（自动降级到软渲染）----
+// 现象：部分机器上 GPU 进程带沙箱启动即崩（exit_code=0xC0000005），渲染层无画面 → 主窗口全黑，
+//       连 --disable-gpu 都无效（GPU 进程仍带沙箱），必须 --no-sandbox --disable-gpu 才能软渲染。
+// 策略：① 曾触发过降级的机器（标记文件存在）或 LFS_DISABLE_GPU=1 → 启动即禁 GPU + 禁 GPU 沙箱；
+//       ② 运行中 GPU 进程连续崩溃 ≥3 次 → 写标记并自动重启进入降级模式（降级模式下不再重启，防循环）。
+const GPU_FLAG_FILE = path.join(app.getPath('userData'), 'gpu-fallback.flag');
+function gpuFallbackActive() {
+  return process.env.LFS_DISABLE_GPU === '1' || fs.existsSync(GPU_FLAG_FILE);
+}
+if (gpuFallbackActive()) {
+  app.commandLine.appendSwitch('disable-gpu');
+  app.commandLine.appendSwitch('no-sandbox');
+}
+
+let gpuCrashCount = 0;
+app.on('child-process-gone', (_e, details) => {
+  if (!details || details.type !== 'GPU' || details.reason !== 'crashed') return;
+  if (gpuFallbackActive()) return; // 已降级仍崩（理论上不会）：只记日志不重启，防循环
+  gpuCrashCount++;
+  if (gpuCrashCount >= 3) {
+    try { fs.writeFileSync(GPU_FLAG_FILE, new Date().toISOString()); } catch (e) {}
+    try { if (engine && engine.logger) engine.logger.warn('electron', 'GPU 进程连续崩溃，已写入降级标记，重启进入软渲染模式'); } catch (e) {}
+    app.relaunch();
+    app.exit(0);
+  }
+});
 
 // 单实例锁，避免重复启动多个共享服务
 const gotLock = app.requestSingleInstanceLock();
@@ -55,9 +83,16 @@ function createWindow() {
     mainWindow = null;
   });
 
-  // 渲染进程崩溃 → 运行日志（远程排障）
+  // 渲染进程崩溃 → 运行日志（远程排障）；自动 reload 恢复（最多 2 次，防循环）
+  let rendererReloadCount = 0;
   mainWindow.webContents.on('render-process-gone', (_e, details) => {
     if (engine && engine.logger) engine.logger.error('electron', '渲染进程崩溃', details);
+    if (details && details.reason === 'crashed' && rendererReloadCount < 2) {
+      rendererReloadCount++;
+      setTimeout(() => {
+        try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload(); } catch (e) {}
+      }, 500);
+    }
   });
   mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
     if (engine && engine.logger) engine.logger.warn('electron', '页面加载失败', { code, desc, url });
