@@ -93,9 +93,14 @@ function register(ctx) {
   } catch (e) {}
   app.get('/admin', (req, res) => res.type('html').send(adminHtml));
 
-  // 前端静态资源（Vue 本地文件，无 CDN 依赖）
-  app.get('/vendor/vue.global.js', (req, res) => {
-    res.type('application/javascript').sendFile(path.join(__dirname, '..', 'renderer', 'vendor', 'vue.global.js'));
+  // 前端静态资源（Vue 本地文件，无 CDN 依赖）。
+  // 注意：fpk 包内 server/ 目录不含 renderer/，必须放在 server/static/vendor 下自包含，
+  // 否则 fnOS 安装后 /vendor/vue.global.js 404，整个管理台 SPA 无法初始化（所有按钮失效）。
+  app.get('/vendor/:file', (req, res) => {
+    const name = path.basename(req.params.file || '');
+    if (!/^[\w.\-]+$/.test(name)) return res.status(400).end();
+    const fp = path.join(__dirname, 'static', 'vendor', name);
+    res.type('application/javascript').sendFile(fp, (err) => { if (err) res.status(404).end(); });
   });
 
   // 登录（远程换 token；回环也可用，返回 ok）
