@@ -1,7 +1,7 @@
 {
   "name": "lanfileshare-mobile",
   "private": true,
-  "version": "1.9.10",
+  "version": "1.9.11",
   "description": "局域网文件共享 Android/iOS 客户端壳（Capacitor）",
   "scripts": {
     "cap": "cap",

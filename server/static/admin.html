@@ -180,17 +180,6 @@
     </style>
   </head>
   <body>
-    <!-- 登录视图 -->
-    <div id="login" class="login-mask">
-      <div class="login-card">
-        <div class="logo">🛠</div>
-        <h2>管理控制台</h2>
-        <p id="loginHint">请输入管理密码</p>
-        <input id="loginPwd" type="password" placeholder="管理密码" @keydown.enter="doLogin" />
-        <button class="btn primary block" @click="doLogin">登 录</button>
-      </div>
-    </div>
-
     <!-- 主界面（应用外壳） -->
     <div id="app">
       <header class="topbar">
@@ -451,6 +440,17 @@
           <label>新密码（至少 4 位）</label><input v-model="pwForm.next" type="password" />
           <label>确认新密码</label><input v-model="pwForm.next2" type="password" />
           <div class="acts"><button class="btn ghost" @click="pwShow = false">取消</button><button class="btn primary" @click="savePassword">保存</button></div>
+        </div>
+      </div>
+
+      <!-- 登录视图（必须位于 #app 挂载点内，@click/@keydown 才会被 Vue 编译） -->
+      <div id="login" class="login-mask">
+        <div class="login-card">
+          <div class="logo">🛠</div>
+          <h2>管理控制台</h2>
+          <p id="loginHint">请输入管理密码</p>
+          <input id="loginPwd" type="password" placeholder="管理密码" @keydown.enter="doLogin" />
+          <button class="btn primary block" @click="doLogin">登 录</button>
         </div>
       </div>
     </div>
