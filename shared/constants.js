@@ -25,6 +25,9 @@ const DISCOVER_TIMEOUT = 5000;
 /** 备用 UDP 端口范围 */
 const UDP_PORT_RANGE = [9527, 9528, 9529, 9530, 9531, 9532, 9533, 9534, 9535, 9536, 9537];
 
+/** 组播组（借鉴 LocalSend：选 224.0.0.0/24 段以兼容部分 Android 拒绝其他组的限制） */
+const MULTICAST_GROUP = '224.0.0.167';
+
 /** 大文件分块大小 (5MB) */
 const CHUNK_SIZE = 5 * 1024 * 1024;
 
@@ -120,6 +123,7 @@ module.exports = {
   OFFLINE_TIMEOUT,
   DISCOVER_TIMEOUT,
   UDP_PORT_RANGE,
+  MULTICAST_GROUP,
   CHUNK_SIZE,
   getLocalIPs,
   getPrimaryIP,

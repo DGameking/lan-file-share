@@ -2,20 +2,26 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const { shortId } = require('../shared/utils');
 const { saveMultipartFiles, pruneDir } = require('./recv-util');
 
 const DROP_FILES_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 接收目录上限 2GB，超出按最旧清理
+const SESSION_TTL = 90 * 1000; // 审批会话有效期
 
 /**
  * 快速投送（Quick Drop）接收端：
- * - POST /api/drop        multipart 整文件投送（小文件）
- * - POST /api/drop/chunk  分块上传（大文件断点续传）
- * - GET  /api/drop/chunk/status?uploadId= 已收分块查询（续传用）
- * - POST /api/drop/finish 合并分块
- * - POST /api/drop        JSON {text} 剪贴板文本投送
- * 文件保存到「接收的文件」目录并实时通知。
+ * - POST /api/drop/prepare      元数据先行：清单审批（自动接收关闭时对端确认）
+ * - GET  /api/drop/session      发送端轮询审批结果
+ * - POST /api/drop/decision     接收端接受/拒绝
+ * - POST /api/drop              multipart 整文件投送（小文件）
+ * - POST /api/drop/chunk        分块上传（大文件断点续传）
+ * - GET  /api/drop/chunk/status 已收分块查询（续传用）
+ * - POST /api/drop/finish       合并分块（含 sha256 校验）
+ * - POST /api/drop              JSON {text} 剪贴板文本投送
+ * 安全：可选 PIN（settings.dropPin）；自动接收关闭时必须持已批准会话；
+ *       提供 sha256 时落盘后校验（422 拒收）。
  */
 function register(engine) {
   const dir = process.env.LFS_DROP_DIR || path.join(engine.dataDir, 'received');
@@ -27,6 +33,66 @@ function register(engine) {
   engine.receivedDir = dir;
 
   const cleanId = (v) => String(v || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+  const sessions = new Map(); // sessionId -> {status, from, files, text, ts}
+
+  setInterval(() => {
+    const now = Date.now();
+    for (const [id, s] of sessions) if (now - s.ts > SESSION_TTL) sessions.delete(id);
+  }, 30 * 1000).unref();
+
+  const getSettings = () => engine.settings || {};
+
+  /** PIN 校验；失败时已响应并返回 false */
+  function checkPin(req, res) {
+    const pin = String(getSettings().dropPin || '').trim();
+    if (!pin) return true;
+    if (String(req.query.pin || '') === pin) return true;
+    res.status(401).json({ error: req.query.pin ? 'bad_pin' : 'pin_required' });
+    return false;
+  }
+
+  /** 会话校验：自动接收关闭时必须持已批准会话；通过返回会话对象，失败已响应并返回 null */
+  function checkSession(req, res, { required = true } = {}) {
+    const sid = cleanId(req.query.sessionId || (req.body && req.body.sessionId));
+    const autoAccept = getSettings().autoAcceptDrop !== false;
+    if (autoAccept && !sid) return { implicit: true };
+    if (!sid) {
+      if (!required) return null;
+      res.status(401).json({ error: 'approval_required' });
+      return null;
+    }
+    const s = sessions.get(sid);
+    if (!s || s.status !== 'accepted') {
+      res.status(s ? 403 : 404).json({ error: s ? 'declined' : 'session_not_found' });
+      return null;
+    }
+    s.ts = Date.now();
+    return s;
+  }
+
+  /** sha256 大小写不敏感比对 */
+  function hashMatch(a, b) {
+    return !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase();
+  }
+
+  function sha256File(file) {
+    return new Promise((resolve, reject) => {
+      const h = crypto.createHash('sha256');
+      const rs = fs.createReadStream(file);
+      rs.on('data', (d) => h.update(d));
+      rs.on('end', () => resolve(h.digest('hex')));
+      rs.on('error', reject);
+    });
+  }
+
+  const setMtime = (file, ms) => {
+    const t = Number(ms);
+    if (!(t > 0)) return;
+    try {
+      const d = new Date(Math.min(t, Date.now() + 86400000));
+      fs.utimesSync(file, d, d);
+    } catch (e) {}
+  };
 
   const notify = (ip, from, files, extra = {}) => {
     const payload = { from, files, ts: Date.now(), ...extra };
@@ -41,41 +107,88 @@ function register(engine) {
     });
   };
 
+  /* ---------- 元数据先行：清单审批（注意：全局 express.json 已解析 body） ---------- */
+  engine.app.post('/api/drop/prepare', (req, res) => {
+    if (!checkPin(req, res)) return;
+    if (getSettings().autoAcceptDrop === false) {
+      const manifest = req.body || {};
+      const sid = shortId();
+      sessions.set(sid, {
+        status: 'pending',
+        from: String(manifest.from || engine.clientIp(req)).slice(0, 60) || '未知设备',
+        files: Array.isArray(manifest.files) ? manifest.files.slice(0, 500) : [],
+        text: !!manifest.text,
+        ts: Date.now(),
+      });
+      engine.broadcast('drop.request', { sessionId: sid, from: sessions.get(sid).from, files: sessions.get(sid).files, text: sessions.get(sid).text });
+      return res.status(202).json({ sessionId: sid, pending: true });
+    }
+    const sid = shortId();
+    sessions.set(sid, {
+      status: 'accepted',
+      from: String((req.body && req.body.from) || engine.clientIp(req)).slice(0, 60) || '未知设备',
+      files: [],
+      text: false,
+      ts: Date.now(),
+    });
+    res.json({ sessionId: sid, accepted: true });
+  });
+
+  /* ---------- 发送端轮询审批结果 ---------- */
+  engine.app.get('/api/drop/session', (req, res) => {
+    const sid = cleanId(req.query.sessionId);
+    const s = sessions.get(sid);
+    if (!s) return res.json({ status: 'expired' });
+    res.json({ status: s.status });
+  });
+
+  /* ---------- 接收端决定 ---------- */
+  engine.app.post('/api/drop/decision', (req, res) => {
+    const sid = cleanId(req.body && req.body.sessionId);
+    const s = sessions.get(sid);
+    if (!s) return res.status(404).json({ error: 'session_not_found' });
+    s.status = req.body && req.body.accept ? 'accepted' : 'declined';
+    s.ts = Date.now();
+    engine.broadcast('drop.request.result', { sessionId: sid, accepted: s.status === 'accepted' });
+    engine.logEvent({ event_type: 'drop_decision', device_name: s.from, ip: engine.clientIp(req), result: s.status });
+    res.json({ ok: true, status: s.status });
+  });
+
   /* ---------- 整文件 / 剪贴板文本 ---------- */
   engine.app.post('/api/drop', async (req, res) => {
-    if (engine.settings && engine.settings.autoAcceptDrop === false) {
-      return res.status(403).json({ error: 'declined' });
-    }
-    const from = String(req.query.from || engine.clientIp(req)).slice(0, 60) || '未知设备';
-
-    // JSON 文本投送（剪贴板）
+    if (!checkPin(req, res)) return;
     if ((req.headers['content-type'] || '').includes('application/json')) {
-      let body = '';
-      req.on('data', (c) => {
-        body += c;
-        if (body.length > 200000) req.destroy();
-      });
-      req.on('end', () => {
-        try {
-          const j = JSON.parse(body || '{}');
-          const text = String(j.text || '').slice(0, 100000);
-          if (!text) return res.status(400).json({ error: 'no_text' });
-          const first = text.trim().split(/\r?\n/)[0].slice(0, 24).replace(/[\\/:*?"<>|]/g, '_') || '剪贴板';
-          const id = shortId() + '_' + first + '.txt';
-          fs.writeFileSync(path.join(dir, id), text, 'utf8');
-          notify(engine.clientIp(req), from, [{ fileId: id, name: first + '.txt', size: Buffer.byteLength(text), mime: 'text/plain', isText: true }]);
-          res.json({ ok: true, received: 1 });
-        } catch (e) {
-          res.status(400).json({ error: 'bad_request' });
-        }
-      });
-      return;
+      const s = checkSession(req, res);
+      if (!s) return;
+      // body 已被全局 express.json 解析，直接取 req.body
+      const text = String((req.body && req.body.text) || '').slice(0, 100000);
+      if (!text) return res.status(400).json({ error: 'no_text' });
+      const first = text.trim().split(/\r?\n/)[0].slice(0, 24).replace(/[\\/:*?"<>|]/g, '_') || '剪贴板';
+      const id = shortId() + '_' + first + '.txt';
+      fs.writeFileSync(path.join(dir, id), text, 'utf8');
+      notify(engine.clientIp(req), (s.from) || String(req.query.from || engine.clientIp(req)).slice(0, 60), [{ fileId: id, name: first + '.txt', size: Buffer.byteLength(text), mime: 'text/plain', isText: true }]);
+      return res.json({ ok: true, received: 1 });
     }
 
+    const s = checkSession(req, res);
+    if (!s) return;
     try {
       const saved = await saveMultipartFiles(req, dir, { maxBytes: DROP_FILES_MAX_BYTES });
-      notify(engine.clientIp(req), from, saved);
-      res.json({ ok: true, received: saved.length, totalSize: saved.reduce((s, f) => s + f.size, 0) });
+      // sha256 校验：不符则删除并拒收（422）
+      const want = String(req.query.sha256 || '');
+      if (want) {
+        for (const f of saved) {
+          const actual = await sha256File(path.join(dir, f.fileId));
+          if (!hashMatch(actual, want)) {
+            try { fs.unlinkSync(path.join(dir, f.fileId)); } catch (e) {}
+            return res.status(422).json({ error: 'checksum_mismatch', fileId: f.fileId });
+          }
+        }
+      }
+      const mtime = req.query.mtime;
+      if (mtime) for (const f of saved) setMtime(path.join(dir, f.fileId), mtime);
+      notify(engine.clientIp(req), (s && s.from) || String(req.query.from || engine.clientIp(req)).slice(0, 60), saved, { verified: !!want });
+      res.json({ ok: true, received: saved.length, totalSize: saved.reduce((s2, f) => s2 + f.size, 0) });
     } catch (e) {
       if (!res.headersSent) res.status(400).json({ error: e.message || 'bad_request' });
     }
@@ -83,8 +196,9 @@ function register(engine) {
 
   /* ---------- 分块上传（大文件断点续传） ---------- */
   engine.app.post('/api/drop/chunk', (req, res) => {
-    if (engine.settings && engine.settings.autoAcceptDrop === false) {
-      return res.status(403).json({ error: 'declined' });
+    if (!checkPin(req, res)) return;
+    if (getSettings().autoAcceptDrop === false && !cleanId(req.query.sessionId)) {
+      return res.status(401).json({ error: 'approval_required' });
     }
     const uploadId = cleanId(req.query.uploadId);
     const index = Number.parseInt(req.query.index, 10);
@@ -115,7 +229,10 @@ function register(engine) {
     res.json({ ok: true, received });
   });
 
-  engine.app.post('/api/drop/finish', (req, res) => {
+  engine.app.post('/api/drop/finish', async (req, res) => {
+    if (!checkPin(req, res)) return;
+    const s = checkSession(req, res);
+    if (!s) return;
     const uploadId = cleanId(req.body && req.body.uploadId);
     const total = Number(req.body && req.body.total);
     const size = Number(req.body && req.body.size) || 0;
@@ -153,11 +270,28 @@ function register(engine) {
       }
       await new Promise((r) => out.end(r));
       const finalSize = fs.existsSync(target) ? fs.statSync(target).size : 0;
+
+      // sha256 校验（发送端在小文件场景提供；分块场景可选）
+      const want = String((req.body && req.body.sha256) || '');
+      if (want) {
+        const actual = await sha256File(target);
+        if (!hashMatch(actual, want)) {
+          try { fs.unlinkSync(target); } catch (e) {}
+          return res.status(422).json({ error: 'checksum_mismatch' });
+        }
+      }
+      // 大小一致性：与 prepare 声明偏差 > 1% 且 > 1MB 视为损坏
+      if (size > 0 && Math.abs(finalSize - size) > Math.max(1024 * 1024, size * 0.01)) {
+        try { fs.unlinkSync(target); } catch (e) {}
+        return res.status(422).json({ error: 'size_mismatch', expected: size, actual: finalSize });
+      }
+      setMtime(target, req.body && req.body.mtime);
+
       try {
         fs.rmSync(uDir, { recursive: true, force: true });
       } catch (e) {}
       pruneDir(dir, DROP_FILES_MAX_BYTES);
-      notify(engine.clientIp(req), from, [{ fileId: id, name: safeName, size: finalSize || size, mime: 'application/octet-stream', resumable: true }]);
+      notify(engine.clientIp(req), (s && s.from) || from, [{ fileId: id, name: safeName, size: finalSize || size, mime: 'application/octet-stream', resumable: true, verified: !!want }]);
       res.json({ ok: true, received: 1 });
     })().catch(() => {
       if (!res.headersSent) res.status(500).json({ error: 'assemble_failed' });

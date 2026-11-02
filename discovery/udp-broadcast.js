@@ -2,7 +2,7 @@
 
 const { EventEmitter } = require('events');
 const dgram = require('dgram');
-const { UDP_PORT, PROTOCOL, UDP_PORT_RANGE, getBroadcastAddresses } = require('../shared/constants');
+const { UDP_PORT, PROTOCOL, UDP_PORT_RANGE, MULTICAST_GROUP, getBroadcastAddresses } = require('../shared/constants');
 
 /**
  * UDP 广播心跳发现。
@@ -41,6 +41,11 @@ class UdpDiscovery extends EventEmitter {
         sock.bind(p, () => {
           try {
             sock.setBroadcast(true);
+            // 加入组播组：广播在跨网段/AP 隔离下易丢包，组播互补（失败不影响广播通道）
+            try {
+              sock.addMembership(MULTICAST_GROUP);
+              sock.setMulticastTTL(4);
+            } catch (e) {}
           } catch (e) {}
           this.sock = sock;
           this.port = p;
@@ -85,6 +90,12 @@ class UdpDiscovery extends EventEmitter {
       } catch (e) {
         /* ignore */
       }
+    }
+    // 组播通道（与广播双发，对端同一端口监听即收）
+    try {
+      this.sock.send(payload, 0, payload.length, this.port, MULTICAST_GROUP);
+    } catch (e) {
+      /* ignore */
     }
   }
 

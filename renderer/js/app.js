@@ -617,6 +617,7 @@
           <div class="row">
             <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.clipboardSync" @change="onCheck($event,'clipboardSync')" /> 跨设备同步剪贴板（复制即同步）</label>
             <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.autoAcceptDrop" @change="onCheck($event,'autoAcceptDrop')" /> 自动接收其他设备的投送文件</label>
+            <label class="field">投送 PIN（对方投送给本机时需提供；本机投送给对方时自动携带）<input type="text" :value="store.settings.dropPin" @change="onText($event,'dropPin')" style="width:160px" placeholder="留空不启用" /></label>
           </div>
           <div class="muted" style="margin-top:8px">剪贴板同步仅在桌面客户端之间生效；接收的文件保存在数据目录的 received 文件夹</div>
         </div>
@@ -811,6 +812,55 @@
       const CHUNK_SIZE = 8 * 1024 * 1024;
       const base = (d) => `http://${d.host}:${d.port}`;
 
+      // 追加公共查询参数（PIN 等）
+      const qs = (extra) => {
+        const pin = store.settings.dropPin ? `&pin=${encodeURIComponent(store.settings.dropPin)}` : '';
+        return (extra || '') + pin;
+      };
+
+      // 小文件（≤64MB）计算 sha256 用于接收端完整性校验
+      async function sha256Hex(f) {
+        if (f.size > 64 * 1024 * 1024) return '';
+        try {
+          const buf = await f.arrayBuffer();
+          const h = await crypto.subtle.digest('SHA-256', buf);
+          return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('');
+        } catch (e) { return ''; }
+      }
+
+      // 元数据先行：请求对端审批（对方关闭自动接收时会弹确认框），返回 sessionId
+      async function prepareDrop(d, files, text) {
+        let r;
+        try {
+          r = await fetch(`${base(d)}/api/drop/prepare${qs('')}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from: store.self.deviceName || '', files, text: !!text }),
+          });
+        } catch (e) { throw new Error('network'); }
+        if (r.status === 401) {
+          const j = await r.json().catch(() => ({}));
+          throw new Error(j.error === 'bad_pin' ? 'PIN 码不正确' : '对方要求 PIN，请让对方在设置中告知，或在本机"设置→投送 PIN"填写后重试');
+        }
+        if (!r.ok && r.status !== 202) throw new Error('HTTP ' + r.status);
+        const j = await r.json();
+        if (j.accepted) return j.sessionId;
+        const sid = j.sessionId;
+        toast(`等待「${d.device_name}」确认接收…`, 'warn');
+        for (let i = 0; i < 40; i++) {
+          await new Promise((res2) => setTimeout(res2, 1500));
+          try {
+            const st = await (await fetch(`${base(d)}/api/drop/session?sessionId=${sid}`)).json();
+            if (st.status === 'accepted') return sid;
+            if (st.status === 'declined') throw new Error('对方已拒绝');
+            if (st.status === 'expired') throw new Error('对方未响应，已超时');
+          } catch (e) {
+            if (String(e.message).indexOf('network') === -1) throw e;
+          }
+        }
+        throw new Error('等待确认超时');
+      }
+
       function stableUploadId(d, f) {
         const s = `${d.device_id}|${f.name}|${f.size}|${f.lastModified || ''}`;
         let h = 5381;
@@ -821,11 +871,13 @@
       async function uploadOne(d, f, t) {
         try {
           if (f.size <= CHUNK_THRESHOLD) {
+            const sha = await sha256Hex(f);
+            const sid = await prepareDrop(d, [{ name: f.name, size: f.size, sha256: sha, mime: f.type || 'application/octet-stream' }], false);
             await new Promise((resolve, reject) => {
               const xhr = new XMLHttpRequest();
               const fd = new FormData();
               fd.append('file', f, f.name);
-              xhr.open('POST', `${base(d)}/api/drop?from=${encodeURIComponent(store.self.deviceName || '')}`);
+              xhr.open('POST', `${base(d)}/api/drop?from=${encodeURIComponent(store.self.deviceName || '')}${qs(`&sessionId=${sid}&sha256=${sha}&mtime=${f.lastModified || ''}`)}`);
               xhr.upload.onprogress = (e) => { if (e.lengthComputable) t.pct = Math.round((e.loaded / e.total) * 100); };
               xhr.onload = () => (xhr.status === 200 ? resolve() : reject(new Error('HTTP ' + xhr.status)));
               xhr.onerror = () => reject(new Error('network'));
@@ -837,6 +889,7 @@
           }
 
           // 分块续传
+          const sid = await prepareDrop(d, [{ name: f.name, size: f.size, sha256: '', mime: f.type || 'application/octet-stream' }], false);
           const uploadId = stableUploadId(d, f);
           const total = Math.ceil(f.size / CHUNK_SIZE);
           let have = new Set();
@@ -851,7 +904,7 @@
               try {
                 const start = i * CHUNK_SIZE;
                 const blob = f.slice(start, Math.min(start + CHUNK_SIZE, f.size));
-                const res = await fetch(`${base(d)}/api/drop/chunk?uploadId=${uploadId}&index=${i}`, {
+                const res = await fetch(`${base(d)}/api/drop/chunk?uploadId=${uploadId}&index=${i}&sessionId=${sid}`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/octet-stream' },
                   body: blob,
@@ -864,10 +917,10 @@
             if (!ok) throw lastErr || new Error('chunk_failed');
             t.pct = Math.round(((i + 1) / total) * 100);
           }
-          const fin = await fetch(`${base(d)}/api/drop/finish?from=${encodeURIComponent(store.self.deviceName || '')}`, {
+          const fin = await fetch(`${base(d)}/api/drop/finish?from=${encodeURIComponent(store.self.deviceName || '')}${qs(`&sessionId=${sid}`)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uploadId, name: f.name, total, size: f.size, from: store.self.deviceName || '' }),
+            body: JSON.stringify({ uploadId, name: f.name, total, size: f.size, from: store.self.deviceName || '', mtime: f.lastModified || 0 }),
           });
           if (!fin.ok) throw new Error('finish HTTP ' + fin.status);
           t.status = 'done'; t.pct = 100;
@@ -891,7 +944,8 @@
         const r = await api.invoke('clip:read');
         if (!r.ok || !r.data) return toast('本机剪贴板为空', 'warn');
         try {
-          const res = await fetch(`http://${d.host}:${d.port}/api/drop`, {
+          const sid = await prepareDrop(d, [], true);
+          const res = await fetch(`${base(d)}/api/drop?from=${encodeURIComponent(store.self.deviceName || '')}${qs(`&sessionId=${sid}`)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: r.data, from: store.self.deviceName || '' }),
@@ -910,6 +964,21 @@
           if (received.value.length > 30) received.value.pop();
           const names = (p.files || []).map((f) => f.name).join('、');
           toast(`「${p.from}」投送了 ${p.files.length} 个文件：${names}`, 'ok');
+        });
+        // 投送审批：对方关闭自动接收时，本机弹确认框
+        api.on('drop.request', async (p) => {
+          const names = (p.files || []).map((f) => f.name).join('、') || '（无文件名）';
+          const desc = p.text ? '剪贴板文本' : `${(p.files || []).length} 个文件：${names}`;
+          let ok = false;
+          try { ok = window.confirm(`「${p.from}」想投送${desc}\n是否接收？`); } catch (e) { ok = true; }
+          try {
+            await fetch(`http://127.0.0.1:${store.self.port}/api/drop/decision`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sessionId: p.sessionId, accept: ok }),
+            });
+          } catch (e) {}
+          toast(ok ? `已同意「${p.from}」的投送` : `已拒绝「${p.from}」的投送`, ok ? 'ok' : 'warn');
         });
         api.on('clip-incoming', (p) => toast(`已同步「${p.deviceName}」的剪贴板`, 'ok'));
       });
