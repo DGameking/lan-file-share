@@ -312,7 +312,20 @@ function register(engine) {
     } catch (e) {}
     const out = fs.createWriteStream(path.join(uDir, `${index}.part`));
     req.pipe(out);
-    out.on('finish', () => res.json({ ok: true }));
+    out.on('finish', async () => {
+      // 逐块 sha256 校验：不符删块并 422（补齐大文件传输的完整性缺口）
+      const want = String(req.query.sha256 || '');
+      if (want) {
+        try {
+          const actual = await sha256File(path.join(uDir, `${index}.part`));
+          if (!hashMatch(actual, want)) {
+            try { fs.unlinkSync(path.join(uDir, `${index}.part`)); } catch (e) {}
+            return res.status(422).json({ error: 'chunk_checksum_mismatch', index });
+          }
+        } catch (e) {}
+      }
+      res.json({ ok: true });
+    });
     out.on('error', () => {
       if (!res.headersSent) res.status(500).json({ error: 'write_failed' });
     });

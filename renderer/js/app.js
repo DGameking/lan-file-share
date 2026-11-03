@@ -567,6 +567,8 @@
           dl.value = null;
           toast('下载失败：' + (p.message || ''), 'warn');
         });
+        pollRz();
+        setInterval(pollRz, 5000);
       });
 
       // ---- 服务器模式 ----
@@ -575,13 +577,27 @@
         await api.invoke('clip:write', `http://${serverAddr.value}`);
         toast('服务地址已复制', 'ok');
       }
+
+      // ---- 会合点状态灯 ----
+      const rzStatus = ref(null); // {enabled, connected, lastSync, lastError, peers}
+      async function pollRz() {
+        try {
+          const r = await fetch(`http://127.0.0.1:${store.self.port}/api/rendezvous/status`);
+          if (r.ok) rzStatus.value = await r.json();
+        } catch (e) {}
+      }
+      const fmtTs = (ts) => {
+        if (!ts) return '从未';
+        const s = Math.round((Date.now() - ts) / 1000);
+        return s < 60 ? `${s}s 前` : s < 3600 ? `${Math.round(s / 60)}min 前` : `${Math.round(s / 3600)}h 前`;
+      };
       function openAdmin() {
         api.invoke('engine:openExternal', `http://${serverAddr.value}/admin`);
       }
       // 启动时静默自动检查（24h 节流，由引擎控制）
       checkUpdate(true);
 
-      return { store, save, onText, onCheck, fps, copy, onHttps, httpsChanged, relaunch, diag, diagRunning, runDiag, openLogsDir,
+      return { store, save, onText, onCheck, fps, copy, onHttps, httpsChanged, relaunch, diag, diagRunning, runDiag, openLogsDir, rzStatus, fmtTs,
                updateInfo, checking, checkUpdate, openUpdateUrl, serverAddr, copyServerAddr, openAdmin,
                dl, startDownload, abortDownload, installNow };
     },
@@ -620,6 +636,11 @@
             <label class="field">接收配额（GB，超出按最旧文件自动清理）<input type="number" min="0.5" step="0.5" style="width:100px" :value="store.settings.dropQuotaGB" @change="onText($event,'dropQuotaGB')" /></label>
             <label class="field">投送 PIN（对方投送给本机时需提供；本机投送给对方时自动携带）<input type="text" :value="store.settings.dropPin" @change="onText($event,'dropPin')" style="width:160px" placeholder="留空不启用" /></label>
             <label class="field">跨网段会合点（中心端 IP:端口，逗号分隔；填光猫层 NAS 地址即可打通双路由器不同网段）<input type="text" :value="store.settings.rendezvous" @change="onText($event,'rendezvous')" placeholder="例：192.168.10.5:8080" /></label>
+          </div>
+          <div class="muted" style="margin-top:6px" v-if="rzStatus && rzStatus.enabled">
+            <span :style="{color: rzStatus.connected ? '#1a9e55' : '#d9534f'}">{{ rzStatus.connected ? '● 已连接' : '● 不可达' }}</span>
+            <span v-if="rzStatus.connected">对端 {{ rzStatus.peers }} 台 · 最后同步 {{ fmtTs(rzStatus.lastSync) }}</span>
+            <span v-else>原因：{{ rzStatus.lastError || '未知' }}（检查中心端地址/防火墙/服务是否启动）</span>
           </div>
           <div class="muted" style="margin-top:8px">剪贴板同步仅在桌面客户端之间生效；接收的文件保存在数据目录的 received 文件夹</div>
         </div>
@@ -867,9 +888,45 @@
         return 'u' + h.toString(36) + s.length.toString(36);
       }
 
-      // 中继路由：对端跨网段（经会合点发现），整文件经中心端暂存转发（≤2GB）
+      // 中继路由：对端跨网段（经会合点发现）；大文件（>16MB）分块上传支持断点续传，小文件整文件直传
       async function relayOne(d, fileLike, name) {
         const hub = d.relay_hub || d.relayHub || `${d.host}:${d.port}`;
+        if (fileLike.size > CHUNK_THRESHOLD) {
+          const uploadId = 'r' + stableUploadId(d, fileLike).slice(1);
+          const total = Math.ceil(fileLike.size / CHUNK_SIZE);
+          let have = new Set();
+          try {
+            const st = await (await fetch(`http://${hub}/api/hub/relay-chunk/status?uploadId=${uploadId}`)).json();
+            if (st.ok) have = new Set(st.received || []);
+          } catch (e) {}
+          for (let i = 0; i < total; i++) {
+            if (have.has(i)) continue;
+            const blob = fileLike.slice(i * CHUNK_SIZE, Math.min((i + 1) * CHUNK_SIZE, fileLike.size));
+            const csha = await sha256Hex(blob);
+            let ok = false, lastErr = null;
+            for (let retry = 0; retry < 3 && !ok; retry++) {
+              try {
+                const res = await fetch(`http://${hub}/api/hub/relay-chunk?uploadId=${uploadId}&index=${i}${csha ? `&sha256=${csha}` : ''}`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/octet-stream' },
+                  body: blob,
+                });
+                ok = res.ok;
+                if (!ok) lastErr = new Error('HTTP ' + res.status);
+              } catch (e) { lastErr = e; }
+              if (!ok) await new Promise((r) => setTimeout(r, 800 * (retry + 1)));
+            }
+            if (!ok) throw lastErr || new Error('relay_chunk_failed');
+          }
+          const fsha = await sha256Hex(fileLike); // ≤64MB 时提供全量校验
+          const fin = await fetch(`http://${hub}/api/hub/relay-chunk/finish?target=${encodeURIComponent(d.device_id)}&from=${encodeURIComponent(store.self.deviceName || '')}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uploadId, name: name || fileLike.name, total, size: fileLike.size, sha256: fsha, mtime: fileLike.lastModified || 0 }),
+          });
+          if (!fin.ok) throw new Error('relay_finish HTTP ' + fin.status);
+          return;
+        }
         const sha = await sha256Hex(fileLike);
         await new Promise((resolve, reject) => {
           const xhr = new XMLHttpRequest();
@@ -920,12 +977,13 @@
           } catch (e) {}
           for (let i = 0; i < total; i++) {
             if (have.has(i)) { t.pct = Math.round(((i + 1) / total) * 100); continue; }
+            const start = i * CHUNK_SIZE;
+            const blob = f.slice(start, Math.min(start + CHUNK_SIZE, f.size));
+            const csha = await sha256Hex(blob); // 逐块摘要，接收端逐块校验
             let ok = false, lastErr = null;
             for (let retry = 0; retry < 3 && !ok; retry++) {
               try {
-                const start = i * CHUNK_SIZE;
-                const blob = f.slice(start, Math.min(start + CHUNK_SIZE, f.size));
-                const res = await fetch(`${base(d)}/api/drop/chunk?uploadId=${uploadId}&index=${i}&sessionId=${sid}`, {
+                const res = await fetch(`${base(d)}/api/drop/chunk?uploadId=${uploadId}&index=${i}&sessionId=${sid}${csha ? `&sha256=${csha}` : ''}`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/octet-stream', ...pinHeaders() },
                   body: blob,
@@ -983,6 +1041,23 @@
       }
 
       async function openReceived() { await api.invoke('engine:openReceivedFolder'); }
+      async function openRecvFile(f) {
+        const r = await api.invoke('engine:openReceivedFile', f.fileId);
+        if (!r.ok) toast('打开失败（文件可能已被移动或删除）', 'warn');
+      }
+      async function saveRecvAs(f) {
+        const r = await api.invoke('engine:saveReceivedAs', f.fileId);
+        if (r.ok && r.data) toast('已另存到 ' + r.data, 'ok');
+        else if (!r.ok) toast('另存失败', 'warn');
+      }
+      async function delRecvFile(f, r) {
+        const res = await api.invoke('engine:deleteReceivedFile', f.fileId);
+        if (res.ok) {
+          const i = r.files.indexOf(f);
+          if (i > -1) r.files.splice(i, 1);
+          toast('已删除（移入回收站）', 'ok');
+        } else toast('删除失败', 'warn');
+      }
       async function clearReceivedHistory() {
         try { await fetch(`http://127.0.0.1:${store.self.port}/api/drop/history`, { method: 'DELETE' }); } catch (e) {}
         received.value = [];
@@ -1031,7 +1106,7 @@
         api.on('clip-incoming', (p) => toast(`已同步「${p.deviceName}」的剪贴板`, 'ok'));
       });
 
-      return { store, onlineDevices, dragDevice, dragAny, transfers, received, clipText, onDropDevice, onDragOver, onDragLeave, sendClip, openReceived, clearReceivedHistory };
+      return { store, onlineDevices, dragDevice, dragAny, transfers, received, clipText, onDropDevice, onDragOver, onDragLeave, sendClip, openReceived, clearReceivedHistory, openRecvFile, saveRecvAs, delRecvFile };
     },
     template: `
       <div>
@@ -1086,7 +1161,9 @@
           <div v-else class="recv-list">
             <div v-for="(r, i) in received" :key="i" class="recv-item">
               <span class="tag blue">{{ r.from }}</span>
-              <span v-for="f in r.files" :key="f.fileId" class="recv-file">{{ f.name }} <span class="muted">({{ formatBytes(f.size) }})</span></span>
+              <span v-for="f in r.files" :key="f.fileId" class="recv-file">{{ f.name }} <span class="muted">({{ formatBytes(f.size) }})</span>
+                <a class="recv-act" @click="openRecvFile(f)">打开</a><a class="recv-act" @click="saveRecvAs(f)">另存</a><a class="recv-act" style="color:#d9534f" @click="delRecvFile(f, r)">删除</a>
+              </span>
             </div>
           </div>
         </div>

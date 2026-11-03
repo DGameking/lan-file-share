@@ -261,6 +261,8 @@ class LanFileShare extends require('events').EventEmitter {
     hubHandler.register(this);
     this.rendezvous = new RendezvousClient(this);
     this.rendezvous.start();
+    // 会合点状态（设置页状态灯 / 自检）
+    this.app.get('/api/rendezvous/status', (req, res) => res.json({ ok: true, ...this.rendezvous.status }));
     browseHandler.register(this);
     downloadHandler.register(this);
     uploadHandler.register(this);

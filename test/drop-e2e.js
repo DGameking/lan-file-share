@@ -133,6 +133,16 @@ async function main() {
   r = await req(18093, 'POST', `/api/drop/finish?from=Sender&sessionId=${j.sessionId}`, { uploadId: 'e2ebig', name: 'big.bin', total, size: big.length, sha256: bigSha, mtime: 1700000000000 });
   assert('分块合并 + sha256 校验通过', r.status === 200 && JSON.parse(r.body).ok);
 
+  // 逐块 sha256：坏块 422 且块被删（v1.12）
+  const badChunkBody = Buffer.from('corrupted-data');
+  r = await new Promise((resolve, reject) => {
+    const rq = http.request(`http://127.0.0.1:18093/api/drop/chunk?uploadId=e2ebad&index=0&sessionId=${j.sessionId}&sha256=${crypto.createHash('sha256').update(Buffer.from('other')).digest('hex')}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': badChunkBody.length } }, (res) => { const o = []; res.on('data', (c) => o.push(c)); res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(o).toString() })); });
+    rq.on('error', reject); rq.end(badChunkBody);
+  });
+  assert('投送坏块返回 422 chunk_checksum_mismatch', r.status === 422 && JSON.parse(r.body).error === 'chunk_checksum_mismatch');
+  r = await req(18093, 'GET', '/api/drop/chunk/status?uploadId=e2ebad');
+  assert('坏块未计入已收分块（续传将重传）', !(JSON.parse(r.body).received || []).includes(0));
+
   /* ---------- v1.11.1：X-LFS-Pin 请求头 / 配额 / 接收历史 ---------- */
 
   // 请求头 PIN（不再走 URL query）：无头 401、错误头 401、正确头放行

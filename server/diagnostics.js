@@ -213,6 +213,25 @@ async function run(engine) {
     log('运行日志目录', false, e.message);
   }
 
+  // 13. 会合点连通性（跨网段发现依赖它）
+  try {
+    if (!engine.rendezvous || !(engine.rendezvous.status && engine.rendezvous.status.enabled)) {
+      log('会合点', true, '未配置（跳过；跨网段互通需在设置中填写中心端地址）');
+    } else {
+      const st = engine.rendezvous.status;
+      const age = st.lastSync ? Math.round((Date.now() - st.lastSync) / 1000) : null;
+      log(
+        '会合点',
+        st.connected,
+        st.connected
+          ? `已连接（${st.hubs.join('、')}），对端 ${st.peers} 台${age != null ? `，最后同步 ${age}s 前` : ''}`
+          : `不可达：${st.lastError} — 检查中心端地址/防火墙，或中心端服务未启动`
+      );
+    }
+  } catch (e) {
+    log('会合点', false, e.message);
+  }
+
   const failed = checks.filter((c) => !c.ok);
   const fixed = checks.filter((c) => c.fixed);
   const summary = failed.length

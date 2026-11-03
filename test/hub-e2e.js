@@ -106,6 +106,47 @@ async function main() {
   const again = await req(18301, 'GET', `/api/hub/relay/${(JSON.parse(r.body).relays[0].relayId)}?token=x&deviceId=${b.deviceId}`);
   assert('中继文件取后即删（再次拉取 404）', again.status === 404);
 
+  // 6. 会合点状态接口（v1.12 状态灯）
+  j = JSON.parse((await req(18302, 'GET', '/api/rendezvous/status')).body.toString());
+  assert('A 侧会合点状态：已连接且对端 ≥1', j.ok && j.enabled && j.connected === true && j.peers >= 1 && j.lastSync > 0);
+  j = JSON.parse((await req(18301, 'GET', '/api/rendezvous/status')).body.toString());
+  assert('Hub 侧状态：未配置（enabled=false）', j.ok && j.enabled === false);
+
+  /* ---------- 7. 中继分块上传（v1.12：大文件断点续传） ---------- */
+  const big = crypto.randomBytes(2.5 * 1024 * 1024);
+  const bigSha = crypto.createHash('sha256').update(big).digest('hex');
+  const csize = 1024 * 1024;
+  const ctotal = Math.ceil(big.length / csize);
+  const uploadId = 'rhube2e';
+  // 坏块 → 422 且块被删
+  const badChunk = big.subarray(0, csize);
+  const badSha = crypto.createHash('sha256').update(Buffer.from('corrupted')).digest('hex');
+  let rc = await req(18301, 'POST', `/api/hub/relay-chunk?uploadId=${uploadId}&index=0&sha256=${badSha}`, badChunk, { 'Content-Type': 'application/octet-stream' });
+  assert('中继坏块返回 422 chunk_checksum_mismatch', rc.status === 422 && JSON.parse(rc.body.toString()).error === 'chunk_checksum_mismatch');
+  let stj = JSON.parse((await req(18301, 'GET', `/api/hub/relay-chunk/status?uploadId=${uploadId}`)).body.toString());
+  assert('坏块未计入已收分块', stj.ok && !(stj.received || []).includes(0));
+  // 正常分块上传
+  for (let i = 0; i < ctotal; i++) {
+    const c = big.subarray(i * csize, Math.min((i + 1) * csize, big.length));
+    const csha = crypto.createHash('sha256').update(c).digest('hex');
+    rc = await req(18301, 'POST', `/api/hub/relay-chunk?uploadId=${uploadId}&index=${i}&sha256=${csha}`, c, { 'Content-Type': 'application/octet-stream' });
+    if (rc.status !== 200) { console.log('  [debug] chunk', i, rc.status, rc.body.toString().slice(0, 100)); break; }
+  }
+  assert('中继分块全部上传成功（逐块校验通过）', rc.status === 200);
+  // 拼装入列
+  rc = await req(18301, 'POST', `/api/hub/relay-chunk/finish?target=${b.deviceId}&from=NetA-PC`, { uploadId, name: 'chunked-cross.bin', total: ctotal, size: big.length, sha256: bigSha, mtime: 1700000000000 });
+  j = JSON.parse(rc.body.toString());
+  assert('中继拼装入列成功', rc.status === 200 && (j.relays || []).length === 1);
+  // B 拉取
+  await sleep(6000);
+  const received2 = fs.readdirSync(path.join(TMP, 'b', 'received'));
+  const got2 = received2.find((n) => n.endsWith('chunked-cross.bin'));
+  assert('B 经分块中继收到文件', !!got2);
+  if (got2) {
+    const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(TMP, 'b', 'received', got2))).digest('hex');
+    assert('B 收到的分块中继文件 sha256 一致', actual === bigSha);
+  }
+
   console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
   process.exit(fail ? 1 : 0);
 }

@@ -252,6 +252,9 @@ class DB {
   removeDropHistory(id) {
     return this._run('DELETE FROM drop_history WHERE id = ?', [id]);
   }
+  removeDropHistoryByFileId(fileId) {
+    return this._run('DELETE FROM drop_history WHERE file_id = ?', [fileId]);
+  }
   clearDropHistory() {
     return this._run('DELETE FROM drop_history');
   }

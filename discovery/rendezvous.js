@@ -12,6 +12,7 @@ const { shortId } = require('../shared/utils');
  * 会合点客户端：向配置的中心端（NAS 等）出站注册，聚合跨网段设备并拉取中继文件。
  * - 每个会合点注册 {deviceId, port...} → 返回 peers 注入 deviceManager（标记 relay）
  * - 返回 incoming 中继清单 → 流式下载到接收目录 → sha256 校验 → drop.incoming 通知
+ * - 暴露 status：连接状态/最后同步时间/失败原因（设置页状态灯与自检使用）
  * 全程出站连接，双 NAT 环境必然可达。
  */
 class RendezvousClient {
@@ -19,6 +20,7 @@ class RendezvousClient {
     this.engine = engine;
     this.timer = null;
     this._stop = false;
+    this.status = { enabled: false, hubs: [], connected: false, lastSync: 0, lastError: '', peers: 0 };
   }
 
   hubs() {
@@ -60,7 +62,16 @@ class RendezvousClient {
   async poll() {
     const engine = this.engine;
     const hubs = this.hubs();
-    if (!hubs.length) return;
+    this.status.enabled = hubs.length > 0;
+    this.status.hubs = hubs.slice();
+    if (!hubs.length) {
+      this.status.connected = false;
+      this.status.lastError = '';
+      return;
+    }
+    let okAny = false;
+    let lastErr = '';
+    let peerCount = 0;
     for (const hub of hubs) {
       let j;
       try {
@@ -68,9 +79,11 @@ class RendezvousClient {
           deviceId: engine.deviceId, deviceName: engine.deviceName,
           port: engine.httpPort || engine.port || 8080, os: process.platform, version: engine.version || '',
         });
-        if (r.status !== 200) continue;
+        if (r.status !== 200) { lastErr = `${hub}: HTTP ${r.status}`; continue; }
         j = JSON.parse(r.body.toString());
-      } catch (e) { continue; }
+      } catch (e) { lastErr = `${hub}: ${e.message || '网络不可达'}`; continue; }
+      okAny = true;
+      peerCount += (j.peers || []).length;
 
       // 跨网段对端注入设备表（标记 relay，直连地址保留供同网段时使用）
       for (const p of j.peers || []) {
@@ -86,6 +99,15 @@ class RendezvousClient {
       for (const inc of j.incoming || []) {
         this.fetchRelay(hub, inc).catch(() => {});
       }
+    }
+    if (okAny) {
+      this.status.connected = true;
+      this.status.lastSync = Date.now();
+      this.status.lastError = '';
+      this.status.peers = peerCount;
+    } else {
+      this.status.connected = false;
+      this.status.lastError = lastErr || '未知的会合点错误';
     }
   }
 

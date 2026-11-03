@@ -122,6 +122,120 @@ function register(engine) {
       .pipe(res)
       .on('finish', () => { try { fs.unlinkSync(r.file); } catch (e) {} relays.delete(r.id); });
   });
+
+  /* ---------- 中继分块上传（大文件断点续传；拼装后进入一次性拉取流程） ---------- */
+  const partsRoot = path.join(dir, '.parts');
+  try { fs.mkdirSync(partsRoot, { recursive: true }); } catch (e) {}
+  const hubChunkSha256 = (file) =>
+    new Promise((resolve) => {
+      const h = require('crypto').createHash('sha256');
+      fs.createReadStream(file).on('data', (d) => h.update(d)).on('end', () => resolve(h.digest('hex'))).on('error', () => resolve(''));
+    });
+
+  // 分块暂存目录清理：超 24h 的未完成中继按最旧删除
+  setInterval(() => {
+    const now = Date.now();
+    try {
+      for (const n of fs.readdirSync(partsRoot)) {
+        const p = path.join(partsRoot, n);
+        try {
+          if (now - fs.statSync(p).mtimeMs > 24 * 3600 * 1000) fs.rmSync(p, { recursive: true, force: true });
+        } catch (e) {}
+      }
+    } catch (e) {}
+  }, 60 * 60 * 1000).unref();
+
+  engine.app.post('/api/hub/relay-chunk', guard((req, res) => {
+    const uploadId = String(req.query.uploadId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+    const index = Number.parseInt(req.query.index, 10);
+    if (!uploadId || !(index >= 0) || index > 100000) return res.status(400).json({ error: 'bad_args' });
+    const uDir = path.join(partsRoot, uploadId);
+    try { fs.mkdirSync(uDir, { recursive: true }); } catch (e) {}
+    const out = fs.createWriteStream(path.join(uDir, `${index}.part`));
+    req.pipe(out);
+    out.on('finish', async () => {
+      const want = String(req.query.sha256 || '');
+      if (want) {
+        const actual = await hubChunkSha256(path.join(uDir, `${index}.part`));
+        if (actual && actual.toLowerCase() !== want.toLowerCase()) {
+          try { fs.unlinkSync(path.join(uDir, `${index}.part`)); } catch (e) {}
+          return res.status(422).json({ error: 'chunk_checksum_mismatch', index });
+        }
+      }
+      res.json({ ok: true });
+    });
+    out.on('error', () => { if (!res.headersSent) res.status(500).json({ error: 'write_failed' }); });
+  }, { rate: 600 }));
+
+  engine.app.get('/api/hub/relay-chunk/status', (req, res) => {
+    const uploadId = String(req.query.uploadId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+    if (!uploadId) return res.status(400).json({ error: 'bad_args' });
+    let received = [];
+    try {
+      received = fs.readdirSync(path.join(partsRoot, uploadId)).filter((n) => n.endsWith('.part')).map((n) => Number.parseInt(n, 10)).filter(Number.isFinite);
+    } catch (e) {}
+    res.json({ ok: true, received });
+  });
+
+  engine.app.post('/api/hub/relay-chunk/finish', guard(async (req, res) => {
+    const target = String(req.query.target || '');
+    const from = String(req.query.from || '');
+    if (!target || target === from) return res.status(400).json({ error: 'bad_args' });
+    if (!peers.has(target) && target !== engine.deviceId) return res.status(404).json({ error: 'target_not_registered' });
+    const b = req.body || {};
+    const uploadId = String(b.uploadId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+    const total = Number(b.total);
+    const size = Number(b.size) || 0;
+    if (!uploadId || !(total >= 1) || total > 100000) return res.status(400).json({ error: 'bad_args' });
+    const uDir = path.join(partsRoot, uploadId);
+    let parts = [];
+    try {
+      parts = fs.readdirSync(uDir).filter((n) => n.endsWith('.part')).map((n) => Number.parseInt(n, 10)).filter((n) => Number.isFinite(n) && n < total).sort((a, b2) => a - b2);
+    } catch (e) {}
+    if (parts.length !== total) return res.status(409).json({ error: 'incomplete', have: parts.length, total });
+
+    const safeName = path.basename(String(b.name || 'file')).replace(/[\\/:*?"<>|]/g, '_') || 'file';
+    const id = shortId();
+    const assembled = path.join(dir, id + '.bin');
+    // 配额预检：中继目录超限时拒收
+    const quotaBytes = Math.round((Number(engine.settings.dropQuotaGB) > 0 ? Number(engine.settings.dropQuotaGB) : 2) * 1024 * 1024 * 1024);
+    let relayTotal = 0;
+    try { for (const n of fs.readdirSync(dir)) { try { relayTotal += fs.statSync(path.join(dir, n)).size; } catch (e) {} } } catch (e) {}
+    if (relayTotal >= quotaBytes) return res.status(413).json({ error: 'quota_exceeded' });
+
+    try {
+      const out = fs.createWriteStream(assembled);
+      for (const i of parts) {
+        await new Promise((resolve, reject) => {
+          const rs = fs.createReadStream(path.join(uDir, `${i}.part`));
+          rs.pipe(out, { end: false });
+          rs.on('end', resolve);
+          rs.on('error', reject);
+        });
+      }
+      await new Promise((r) => out.end(r));
+      fs.rmSync(uDir, { recursive: true, force: true });
+    } catch (e) {
+      try { fs.unlinkSync(assembled); } catch (e2) {}
+      return res.status(500).json({ error: 'assemble_failed' });
+    }
+    // 全量 sha256 校验（发送端 ≤64MB 时提供）
+    const want = String(b.sha256 || '');
+    if (want) {
+      const actual = await hubChunkSha256(assembled);
+      if (!actual || actual.toLowerCase() !== want.toLowerCase()) {
+        try { fs.unlinkSync(assembled); } catch (e) {}
+        return res.status(422).json({ error: 'checksum_mismatch' });
+      }
+    }
+    const rid = shortId();
+    relays.set(rid, {
+      id: rid, target, from, name: safeName, size: fs.existsSync(assembled) ? fs.statSync(assembled).size : size, mime: 'application/octet-stream',
+      sha256: want, mtime: Number(b.mtime) || 0, file: assembled, token: shortId(), ts: Date.now(),
+    });
+    engine.logEvent({ event_type: 'hub_relay', device_name: from, ip: engine.clientIp(req), target, result: 'success', detail: { count: 1, chunked: true, size } });
+    res.json({ ok: true, relays: [{ relayId: rid, name: safeName, size }] });
+  }, { rate: 60, trackRelay: true }));
 }
 
 module.exports = { register };

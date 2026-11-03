@@ -179,6 +179,42 @@ function registerIpc() {
     if (engine && engine.receivedDir) shell.openPath(engine.receivedDir);
     return { ok: true };
   });
+  // 收件箱单文件操作（路径严格限定在接收目录内，防目录穿越）
+  const recvFilePath = (name) => {
+    const dir = engine && engine.receivedDir;
+    if (!dir) return null;
+    const p = path.resolve(dir, path.basename(String(name || '')));
+    return p.startsWith(path.resolve(dir) + path.sep) || p === path.resolve(dir) ? p : null;
+  };
+  ipcMain.handle('engine:openReceivedFile', async (_e, name) => {
+    const p = recvFilePath(name);
+    if (!p || !fs.existsSync(p)) return { ok: false, error: 'not_found' };
+    shell.openPath(p);
+    return { ok: true };
+  });
+  ipcMain.handle('engine:deleteReceivedFile', async (_e, name) => {
+    const p = recvFilePath(name);
+    if (!p || !fs.existsSync(p)) return { ok: false, error: 'not_found' };
+    try {
+      await shell.trashItem(p); // 优先移入系统回收站，可反悔
+    } catch (e) {
+      try { fs.unlinkSync(p); } catch (e2) { return { ok: false, error: e2.message }; }
+    }
+    try { engine.db.removeDropHistoryByFileId(String(name)); } catch (e) {}
+    return { ok: true };
+  });
+  ipcMain.handle('engine:saveReceivedAs', async (_e, name) => {
+    const p = recvFilePath(name);
+    if (!p || !fs.existsSync(p)) return { ok: false, error: 'not_found' };
+    const res = await dialog.showSaveDialog(mainWindow, { defaultPath: path.basename(p) });
+    if (res.canceled || !res.filePath) return { ok: true, data: null };
+    try {
+      fs.copyFileSync(p, res.filePath);
+      return { ok: true, data: res.filePath };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
   h('engine:diagnose', async () => require('../server/diagnostics').run(engine));
   h('engine:checkUpdate', (opts) => engine.checkUpdate(!!(opts && opts.auto)));
   h('engine:update:download', () => engine.downloadUpdate());

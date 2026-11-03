@@ -551,6 +551,12 @@ var rtc={
   nameOf:function(id){ var m=members.filter(function(x){return x.id===id;})[0]; return m?m.name:id; },
   start:function(media){
     if(this.inCall) return;
+    // HTTPS 引导：浏览器安全策略要求安全上下文，HTTP 下直接给出开启路径而不是报错
+    if(location.protocol!=='https:'){
+      var go=confirm('音视频通话与屏幕共享需要 HTTPS（浏览器安全策略限制）。\n\n开启方法：\n1. 打开管理控制台 /admin → 设置 → 开启 HTTPS（自签证书，重启生效）；\n2. 手机浏览器首次访问需在地址栏信任证书警告。\n\n现在前往管理控制台开启？');
+      if(go) location.href='/admin';
+      return;
+    }
     // 跨设备（@前缀）成员暂不支持通话，仅本机服务内的成员可发起
     var others=members.filter(function(m){return m.id!==selfId && m.id.indexOf('@')===-1;});
     if(!others.length){ alert('当前没有其他在线成员（跨设备通话将在后续版本支持）'); return; }
