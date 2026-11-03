@@ -13,7 +13,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(ShareIntentPlugin.class);
         super.onCreate(savedInstanceState);
-        sharePlugin = (ShareIntentPlugin) bridge.getPlugin("ShareIntent");
+        sharePlugin = (ShareIntentPlugin) bridge.getPlugin("ShareIntent").getInstance();
         handleIntent(getIntent());
     }
 
