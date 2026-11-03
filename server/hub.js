@@ -33,7 +33,40 @@ function register(engine) {
 
   const self = () => ({ deviceId: engine.deviceId, deviceName: engine.deviceName, version: engine.version, port: engine.port, ip: '127.0.0.1', os: process.platform });
 
-  engine.app.post('/api/hub/register', (req, res) => {
+  /* ---------- 守卫：每 IP 限流 + 中继并发上限（防滥用打满磁盘/带宽） ---------- */
+  const buckets = new Map(); // ip -> {tokens, ts}
+  const RATE_WINDOW = 60 * 1000;
+  let activeRelays = 0;
+  const MAX_CONCURRENT = 3;
+  setInterval(() => {
+    const now = Date.now();
+    for (const [ip, b] of buckets) if (now - b.ts > RATE_WINDOW * 2) buckets.delete(ip);
+  }, 120 * 1000).unref();
+  function rateOk(req, res, max) {
+    const ip = engine.clientIp(req);
+    const now = Date.now();
+    let b = buckets.get(ip);
+    if (!b || now - b.ts > RATE_WINDOW) b = { tokens: max, ts: now };
+    b.tokens -= 1;
+    b.ts = now;
+    buckets.set(ip, b);
+    if (b.tokens < 0) {
+      res.status(429).json({ error: 'rate_limited' });
+      return false;
+    }
+    return true;
+  }
+  const guard = (handler, { rate = 120, trackRelay = false } = {}) => (req, res) => {
+    if (!rateOk(req, res, rate)) return;
+    if (trackRelay) {
+      if (activeRelays >= MAX_CONCURRENT) return res.status(429).json({ error: 'busy' });
+      activeRelays++;
+      res.on('finish', () => { activeRelays--; });
+    }
+    handler(req, res);
+  };
+
+  engine.app.post('/api/hub/register', guard((req, res) => {
     const b = req.body || {};
     if (!b.deviceId) return res.status(400).json({ error: 'bad_request' });
     const now = Date.now();
@@ -47,14 +80,14 @@ function register(engine) {
       .filter((r) => r.target === b.deviceId)
       .map((r) => ({ relayId: r.id, token: r.token, from: r.from, fromName: (peers.get(r.from) || {}).deviceName || r.from, name: r.name, size: r.size, sha256: r.sha256, mtime: r.mtime }));
     res.json({ ok: true, peers: peerList, incoming, hub: self() });
-  });
+  }, { rate: 60 }));
 
   engine.app.get('/api/hub/devices', (req, res) => {
     const now = Date.now();
     res.json({ ok: true, devices: [...peers.values()].filter((p) => now - p.ts <= PEER_TTL), hub: self() });
   });
 
-  engine.app.post('/api/hub/relay', async (req, res) => {
+  engine.app.post('/api/hub/relay', guard(async (req, res) => {
     const target = String(req.query.target || '');
     const from = String(req.query.from || '');
     if (!target || target === from) return res.status(400).json({ error: 'bad_args' });
@@ -76,7 +109,7 @@ function register(engine) {
     } catch (e) {
       if (!res.headersSent) res.status(400).json({ error: e.message || 'bad_request' });
     }
-  });
+  }, { rate: 30, trackRelay: true }));
 
   engine.app.get('/api/hub/relay/:id', (req, res) => {
     const r = relays.get(String(req.params.id || ''));

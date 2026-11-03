@@ -239,6 +239,26 @@ class DB {
     );
   }
 
+  /* ---------- 投送接收历史 ---------- */
+  addDropHistory(e) {
+    return this._run(
+      'INSERT INTO drop_history (ts, from_name, file_id, name, size, mime, is_text, verified, via_relay) VALUES (?,?,?,?,?,?,?,?,?)',
+      [e.ts || Date.now(), e.from_name || '', e.file_id || '', e.name || 'file', e.size || 0, e.mime || '', e.is_text ? 1 : 0, e.verified ? 1 : 0, e.via_relay ? 1 : 0]
+    );
+  }
+  listDropHistory(limit = 200) {
+    return this._query('SELECT * FROM drop_history ORDER BY ts DESC, id DESC LIMIT ?', [limit]);
+  }
+  removeDropHistory(id) {
+    return this._run('DELETE FROM drop_history WHERE id = ?', [id]);
+  }
+  clearDropHistory() {
+    return this._run('DELETE FROM drop_history');
+  }
+  pruneDropHistory(keep = 1000) {
+    this._run('DELETE FROM drop_history WHERE id NOT IN (SELECT id FROM drop_history ORDER BY ts DESC, id DESC LIMIT ?)', [keep]);
+  }
+
   /** 关闭底层数据库连接（持久化最后一次写入）。 */
   close() {
     try {

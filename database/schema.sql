@@ -77,3 +77,18 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_chat_messages_ts ON chat_messages(ts);
+
+-- 投送接收历史（持久化，重启不丢）
+CREATE TABLE IF NOT EXISTS drop_history (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts         INTEGER NOT NULL,
+    from_name  TEXT,
+    file_id    TEXT,
+    name       TEXT NOT NULL,
+    size       INTEGER DEFAULT 0,
+    mime       TEXT,
+    is_text    INTEGER DEFAULT 0,
+    verified   INTEGER DEFAULT 0,
+    via_relay  INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_drop_history_ts ON drop_history(ts);

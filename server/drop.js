@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const { shortId } = require('../shared/utils');
 const { saveMultipartFiles, pruneDir } = require('./recv-util');
 
-const DROP_FILES_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 接收目录上限 2GB，超出按最旧清理
+const DROP_FILES_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 默认接收配额 2GB（可经 settings.dropQuotaGB 调整）
 const SESSION_TTL = 90 * 1000; // 审批会话有效期
 
 /**
@@ -35,6 +35,35 @@ function register(engine) {
   const cleanId = (v) => String(v || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
   const sessions = new Map(); // sessionId -> {status, from, files, text, ts}
 
+  /* ---------- 接收配额（settings.dropQuotaGB，默认 2GB，超出按最旧清理） ---------- */
+  const DEFAULT_QUOTA_BYTES = 2 * 1024 * 1024 * 1024;
+  const quotaBytes = () => {
+    const gb = Number(getSettings().dropQuotaGB);
+    return gb > 0 ? Math.round(gb * 1024 * 1024 * 1024) : DEFAULT_QUOTA_BYTES;
+  };
+  const dirSize = (d) => {
+    let total = 0;
+    try {
+      for (const n of fs.readdirSync(d)) {
+        try { total += fs.statSync(path.join(d, n)).size; } catch (e) {}
+      }
+    } catch (e) {}
+    return total;
+  };
+
+  // 分块暂存目录清理：超 24h 的未完成上传按最旧删除（防 .parts 无限增长）
+  setInterval(() => {
+    const now = Date.now();
+    try {
+      for (const n of fs.readdirSync(partsDir)) {
+        const p = path.join(partsDir, n);
+        try {
+          if (now - fs.statSync(p).mtimeMs > 24 * 3600 * 1000) fs.rmSync(p, { recursive: true, force: true });
+        } catch (e) {}
+      }
+    } catch (e) {}
+  }, 60 * 60 * 1000).unref();
+
   setInterval(() => {
     const now = Date.now();
     for (const [id, s] of sessions) if (now - s.ts > SESSION_TTL) sessions.delete(id);
@@ -42,13 +71,61 @@ function register(engine) {
 
   const getSettings = () => engine.settings || {};
 
-  /** PIN 校验；失败时已响应并返回 false */
+  /** PIN 校验；优先 X-LFS-Pin 请求头（避免明文 URL 泄露到日志/嗅探），query 兼容保留；失败时已响应并返回 false */
   function checkPin(req, res) {
     const pin = String(getSettings().dropPin || '').trim();
     if (!pin) return true;
-    if (String(req.query.pin || '') === pin) return true;
-    res.status(401).json({ error: req.query.pin ? 'bad_pin' : 'pin_required' });
+    const headerPin = req.headers['x-lfs-pin'];
+    const given = headerPin != null && headerPin !== '' ? String(headerPin) : req.query.pin != null ? String(req.query.pin) : '';
+    if (given === pin) return true;
+    res.status(401).json({ error: given ? 'bad_pin' : 'pin_required' });
     return false;
+  }
+
+  /* ---------- 守卫：拉黑 IP 拦截 + 每 IP 令牌桶限流 + 并发传输上限 ---------- */
+  const buckets = new Map(); // ip -> {tokens, ts}
+  const RATE_MAX = 120; // 每分钟令牌
+  const RATE_WINDOW = 60 * 1000;
+  let activeTransfers = 0;
+  const MAX_CONCURRENT = 3;
+  setInterval(() => {
+    const now = Date.now();
+    for (const [ip, b] of buckets) if (now - b.ts > RATE_WINDOW * 2) buckets.delete(ip);
+  }, 120 * 1000).unref();
+
+  function rateOk(req, res) {
+    // 拉黑设备所在 IP 直接拒绝
+    const ip = engine.clientIp(req);
+    try {
+      const blocked = (engine.deviceManager.list() || []).some((d) => d.is_blacklisted && d.host === ip);
+      if (blocked) {
+        res.status(403).json({ error: 'ip_blocked' });
+        return false;
+      }
+    } catch (e) {}
+    const now = Date.now();
+    let b = buckets.get(ip);
+    if (!b || now - b.ts > RATE_WINDOW) b = { tokens: RATE_MAX, ts: now };
+    b.tokens -= 1;
+    b.ts = now;
+    buckets.set(ip, b);
+    if (b.tokens < 0) {
+      res.status(429).json({ error: 'rate_limited' });
+      return false;
+    }
+    return true;
+  }
+
+  function guard(handler, { trackTransfer = false } = {}) {
+    return (req, res) => {
+      if (!rateOk(req, res)) return;
+      if (trackTransfer) {
+        if (activeTransfers >= MAX_CONCURRENT) return res.status(429).json({ error: 'busy' });
+        activeTransfers++;
+        res.on('finish', () => { activeTransfers--; });
+      }
+      handler(req, res);
+    };
   }
 
   /** 会话校验：自动接收关闭时必须持已批准会话；通过返回会话对象，失败已响应并返回 null */
@@ -98,6 +175,17 @@ function register(engine) {
     const payload = { from, files, ts: Date.now(), ...extra };
     engine.broadcast('drop.incoming', payload);
     engine.logger && engine.logger.info('drop', `收到投送（${files.length} 个文件）`, { from, ip, names: files.map((f) => f.name).slice(0, 5) });
+    // 接收历史持久化（重启不丢，供收件箱回溯）
+    try {
+      for (const f of files) {
+        engine.db.addDropHistory({
+          ts: payload.ts, from_name: from, file_id: f.fileId || '', name: f.name || 'file',
+          size: f.size || 0, mime: f.mime || '', is_text: !!f.isText,
+          verified: !!f.verified, via_relay: !!extra.via_relay,
+        });
+      }
+      engine.db.pruneDropHistory(1000);
+    } catch (e) {}
     engine.logEvent({
       event_type: 'file_receive',
       device_name: from,
@@ -107,8 +195,21 @@ function register(engine) {
     });
   };
 
+  /* ---------- 接收历史（收件箱回溯） ---------- */
+  engine.app.get('/api/drop/history', (req, res) => {
+    res.json({ ok: true, items: engine.db.listDropHistory(Math.min(Number(req.query.limit) || 200, 500)) });
+  });
+  engine.app.delete('/api/drop/history/:id', (req, res) => {
+    engine.db.removeDropHistory(Number(req.params.id));
+    res.json({ ok: true });
+  });
+  engine.app.delete('/api/drop/history', (req, res) => {
+    engine.db.clearDropHistory();
+    res.json({ ok: true });
+  });
+
   /* ---------- 元数据先行：清单审批（注意：全局 express.json 已解析 body） ---------- */
-  engine.app.post('/api/drop/prepare', (req, res) => {
+  engine.app.post('/api/drop/prepare', guard((req, res) => {
     if (!checkPin(req, res)) return;
     if (getSettings().autoAcceptDrop === false) {
       const manifest = req.body || {};
@@ -132,7 +233,7 @@ function register(engine) {
       ts: Date.now(),
     });
     res.json({ sessionId: sid, accepted: true });
-  });
+  }));
 
   /* ---------- 发送端轮询审批结果 ---------- */
   engine.app.get('/api/drop/session', (req, res) => {
@@ -155,7 +256,7 @@ function register(engine) {
   });
 
   /* ---------- 整文件 / 剪贴板文本 ---------- */
-  engine.app.post('/api/drop', async (req, res) => {
+  engine.app.post('/api/drop', guard(async (req, res) => {
     if (!checkPin(req, res)) return;
     if ((req.headers['content-type'] || '').includes('application/json')) {
       const s = checkSession(req, res);
@@ -172,8 +273,10 @@ function register(engine) {
 
     const s = checkSession(req, res);
     if (!s) return;
+    // 配额预检：目录已超配额时拒收（413），避免先写满再清理
+    if (dirSize(dir) >= quotaBytes()) return res.status(413).json({ error: 'quota_exceeded', quotaBytes: quotaBytes() });
     try {
-      const saved = await saveMultipartFiles(req, dir, { maxBytes: DROP_FILES_MAX_BYTES });
+      const saved = await saveMultipartFiles(req, dir, { maxBytes: quotaBytes() });
       // sha256 校验：不符则删除并拒收（422）
       const want = String(req.query.sha256 || '');
       if (want) {
@@ -192,10 +295,10 @@ function register(engine) {
     } catch (e) {
       if (!res.headersSent) res.status(400).json({ error: e.message || 'bad_request' });
     }
-  });
+  }));
 
   /* ---------- 分块上传（大文件断点续传） ---------- */
-  engine.app.post('/api/drop/chunk', (req, res) => {
+  engine.app.post('/api/drop/chunk', guard((req, res) => {
     if (!checkPin(req, res)) return;
     if (getSettings().autoAcceptDrop === false && !cleanId(req.query.sessionId)) {
       return res.status(401).json({ error: 'approval_required' });
@@ -213,7 +316,7 @@ function register(engine) {
     out.on('error', () => {
       if (!res.headersSent) res.status(500).json({ error: 'write_failed' });
     });
-  });
+  }));
 
   engine.app.get('/api/drop/chunk/status', (req, res) => {
     const uploadId = cleanId(req.query.uploadId);
@@ -229,7 +332,7 @@ function register(engine) {
     res.json({ ok: true, received });
   });
 
-  engine.app.post('/api/drop/finish', async (req, res) => {
+  engine.app.post('/api/drop/finish', guard(async (req, res) => {
     if (!checkPin(req, res)) return;
     const s = checkSession(req, res);
     if (!s) return;
@@ -257,6 +360,9 @@ function register(engine) {
     const safeName = path.basename(rawName).replace(/[\\/:*?"<>|]/g, '_') || 'file';
     const id = shortId() + '_' + safeName;
     const target = path.join(dir, id);
+
+    // 配额预检：接收目录已超配额时拒收（413）
+    if (dirSize(dir) >= quotaBytes()) return res.status(413).json({ error: 'quota_exceeded', quotaBytes: quotaBytes() });
 
     (async () => {
       const out = fs.createWriteStream(target);
@@ -290,13 +396,13 @@ function register(engine) {
       try {
         fs.rmSync(uDir, { recursive: true, force: true });
       } catch (e) {}
-      pruneDir(dir, DROP_FILES_MAX_BYTES);
+      pruneDir(dir, quotaBytes());
       notify(engine.clientIp(req), (s && s.from) || from, [{ fileId: id, name: safeName, size: finalSize || size, mime: 'application/octet-stream', resumable: true, verified: !!want }]);
       res.json({ ok: true, received: 1 });
     })().catch(() => {
       if (!res.headersSent) res.status(500).json({ error: 'assemble_failed' });
     });
-  });
+  }));
 }
 
 module.exports = { register };

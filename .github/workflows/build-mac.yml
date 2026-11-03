@@ -128,3 +128,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release create "$GITHUB_REF_NAME" rel/* --title "$GITHUB_REF_NAME" --generate-notes
+
+      - name: Generate and upload SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd rel
+          sha256sum * > ../SHA256SUMS.txt
+          cd ..
+          gh release upload "$GITHUB_REF_NAME" SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"

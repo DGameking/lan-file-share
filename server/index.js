@@ -159,6 +159,7 @@ class LanFileShare extends require('events').EventEmitter {
         defaultEncrypt: false,
         clipboardSync: true,
         autoAcceptDrop: true,
+        dropQuotaGB: 2,
         https: false,
         serverMode: false,
         autoUpdateCheck: true,

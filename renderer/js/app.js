@@ -617,6 +617,7 @@
           <div class="row">
             <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.clipboardSync" @change="onCheck($event,'clipboardSync')" /> 跨设备同步剪贴板（复制即同步）</label>
             <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.autoAcceptDrop" @change="onCheck($event,'autoAcceptDrop')" /> 自动接收其他设备的投送文件</label>
+            <label class="field">接收配额（GB，超出按最旧文件自动清理）<input type="number" min="0.5" step="0.5" style="width:100px" :value="store.settings.dropQuotaGB" @change="onText($event,'dropQuotaGB')" /></label>
             <label class="field">投送 PIN（对方投送给本机时需提供；本机投送给对方时自动携带）<input type="text" :value="store.settings.dropPin" @change="onText($event,'dropPin')" style="width:160px" placeholder="留空不启用" /></label>
             <label class="field">跨网段会合点（中心端 IP:端口，逗号分隔；填光猫层 NAS 地址即可打通双路由器不同网段）<input type="text" :value="store.settings.rendezvous" @change="onText($event,'rendezvous')" placeholder="例：192.168.10.5:8080" /></label>
           </div>
@@ -813,11 +814,8 @@
       const CHUNK_SIZE = 8 * 1024 * 1024;
       const base = (d) => `http://${d.host}:${d.port}`;
 
-      // 追加公共查询参数（PIN 等）
-      const qs = (extra) => {
-        const pin = store.settings.dropPin ? `&pin=${encodeURIComponent(store.settings.dropPin)}` : '';
-        return (extra || '') + pin;
-      };
+      // PIN 改走请求头传递（避免明文出现在 URL 被日志/嗅探泄露）
+      const pinHeaders = () => (store.settings.dropPin ? { 'X-LFS-Pin': store.settings.dropPin } : {});
 
       // 小文件（≤64MB）计算 sha256 用于接收端完整性校验
       async function sha256Hex(f) {
@@ -833,9 +831,9 @@
       async function prepareDrop(d, files, text) {
         let r;
         try {
-          r = await fetch(`${base(d)}/api/drop/prepare${qs('')}`, {
+          r = await fetch(`${base(d)}/api/drop/prepare`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...pinHeaders() },
             body: JSON.stringify({ from: store.self.deviceName || '', files, text: !!text }),
           });
         } catch (e) { throw new Error('network'); }
@@ -877,7 +875,7 @@
           const xhr = new XMLHttpRequest();
           const fd = new FormData();
           fd.append('file', fileLike, name || fileLike.name);
-          xhr.open('POST', `http://${hub}/api/hub/relay?target=${encodeURIComponent(d.device_id)}&from=${encodeURIComponent(store.self.deviceName || '')}${qs(`&sha256=${sha}&mtime=${fileLike.lastModified || ''}`)}`);
+          xhr.open('POST', `http://${hub}/api/hub/relay?target=${encodeURIComponent(d.device_id)}&from=${encodeURIComponent(store.self.deviceName || '')}&sha256=${sha}&mtime=${fileLike.lastModified || ''}`);
           xhr.onload = () => (xhr.status === 200 ? resolve() : reject(new Error('HTTP ' + xhr.status)));
           xhr.onerror = () => reject(new Error('network'));
           xhr.send(fd);
@@ -899,7 +897,8 @@
               const xhr = new XMLHttpRequest();
               const fd = new FormData();
               fd.append('file', f, f.name);
-              xhr.open('POST', `${base(d)}/api/drop?from=${encodeURIComponent(store.self.deviceName || '')}${qs(`&sessionId=${sid}&sha256=${sha}&mtime=${f.lastModified || ''}`)}`);
+              xhr.open('POST', `${base(d)}/api/drop?from=${encodeURIComponent(store.self.deviceName || '')}&sessionId=${sid}&sha256=${sha}&mtime=${f.lastModified || ''}`);
+              if (store.settings.dropPin) xhr.setRequestHeader('X-LFS-Pin', store.settings.dropPin);
               xhr.upload.onprogress = (e) => { if (e.lengthComputable) t.pct = Math.round((e.loaded / e.total) * 100); };
               xhr.onload = () => (xhr.status === 200 ? resolve() : reject(new Error('HTTP ' + xhr.status)));
               xhr.onerror = () => reject(new Error('network'));
@@ -928,7 +927,7 @@
                 const blob = f.slice(start, Math.min(start + CHUNK_SIZE, f.size));
                 const res = await fetch(`${base(d)}/api/drop/chunk?uploadId=${uploadId}&index=${i}&sessionId=${sid}`, {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/octet-stream' },
+                  headers: { 'Content-Type': 'application/octet-stream', ...pinHeaders() },
                   body: blob,
                 });
                 ok = res.ok;
@@ -939,9 +938,9 @@
             if (!ok) throw lastErr || new Error('chunk_failed');
             t.pct = Math.round(((i + 1) / total) * 100);
           }
-          const fin = await fetch(`${base(d)}/api/drop/finish?from=${encodeURIComponent(store.self.deviceName || '')}${qs(`&sessionId=${sid}`)}`, {
+          const fin = await fetch(`${base(d)}/api/drop/finish?from=${encodeURIComponent(store.self.deviceName || '')}&sessionId=${sid}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...pinHeaders() },
             body: JSON.stringify({ uploadId, name: f.name, total, size: f.size, from: store.self.deviceName || '', mtime: f.lastModified || 0 }),
           });
           if (!fin.ok) throw new Error('finish HTTP ' + fin.status);
@@ -973,9 +972,9 @@
             return;
           }
           const sid = await prepareDrop(d, [], true);
-          const res = await fetch(`${base(d)}/api/drop?from=${encodeURIComponent(store.self.deviceName || '')}${qs(`&sessionId=${sid}`)}`, {
+          const res = await fetch(`${base(d)}/api/drop?from=${encodeURIComponent(store.self.deviceName || '')}&sessionId=${sid}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...pinHeaders() },
             body: JSON.stringify({ text: r.data, from: store.self.deviceName || '' }),
           });
           if (res.ok) toast(`剪贴板已投送给「${d.device_name}」`, 'ok');
@@ -984,12 +983,33 @@
       }
 
       async function openReceived() { await api.invoke('engine:openReceivedFolder'); }
+      async function clearReceivedHistory() {
+        try { await fetch(`http://127.0.0.1:${store.self.port}/api/drop/history`, { method: 'DELETE' }); } catch (e) {}
+        received.value = [];
+        toast('接收记录已清空（文件仍保留在接收文件夹中）', 'ok');
+      }
 
       onMounted(() => {
         loadClip();
+        // 启动时加载持久化接收历史（重启不丢），按 3 秒窗口聚合同批文件
+        (async () => {
+          try {
+            const r = await fetch(`http://127.0.0.1:${store.self.port}/api/drop/history?limit=200`);
+            if (!r.ok) return;
+            const j = await r.json();
+            const groups = [];
+            for (const it of (j.items || []).slice().reverse()) {
+              const last = groups[groups.length - 1];
+              const f = { fileId: it.file_id, name: it.name, size: it.size, isText: !!it.is_text };
+              if (last && last.from === it.from_name && Math.abs(last.ts - it.ts) < 3000) last.files.push(f);
+              else groups.push({ from: it.from_name || '未知设备', ts: it.ts, files: [f] });
+            }
+            received.value = groups.reverse();
+          } catch (e) {}
+        })();
         api.on('drop.incoming', (p) => {
           received.value.unshift(p);
-          if (received.value.length > 30) received.value.pop();
+          if (received.value.length > 200) received.value.length = 200;
           const names = (p.files || []).map((f) => f.name).join('、');
           toast(`「${p.from}」投送了 ${p.files.length} 个文件：${names}`, 'ok');
         });
@@ -1011,7 +1031,7 @@
         api.on('clip-incoming', (p) => toast(`已同步「${p.deviceName}」的剪贴板`, 'ok'));
       });
 
-      return { store, onlineDevices, dragDevice, dragAny, transfers, received, clipText, onDropDevice, onDragOver, onDragLeave, sendClip, openReceived };
+      return { store, onlineDevices, dragDevice, dragAny, transfers, received, clipText, onDropDevice, onDragOver, onDragLeave, sendClip, openReceived, clearReceivedHistory };
     },
     template: `
       <div>
@@ -1057,7 +1077,10 @@
         <div class="card">
           <div class="row" style="justify-content:space-between">
             <h3 style="margin:0">📥 收到的投送（{{ received.length }}）</h3>
-            <button class="btn ghost sm" @click="openReceived">打开接收文件夹</button>
+            <div class="row" style="gap:6px">
+              <button class="btn ghost sm" @click="clearReceivedHistory">清空记录</button>
+              <button class="btn ghost sm" @click="openReceived">打开接收文件夹</button>
+            </div>
           </div>
           <div v-if="received.length === 0" class="empty">暂无收到文件 — 其他设备投送的文件会保存在这里</div>
           <div v-else class="recv-list">

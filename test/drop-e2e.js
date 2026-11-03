@@ -28,7 +28,7 @@ function req(port, method, p, body, headers = {}) {
   });
 }
 
-function multipart(port, p, filename, buf, query = '') {
+function multipart(port, p, filename, buf, query = '', headers = {}) {
   return new Promise((resolve, reject) => {
     const boundary = '----e2e' + Date.now();
     const head = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: application/octet-stream\r\n\r\n`);
@@ -36,7 +36,7 @@ function multipart(port, p, filename, buf, query = '') {
     const payload = Buffer.concat([head, buf, tail]);
     const r = http.request(`http://127.0.0.1:${port}${p}${query}`, {
       method: 'POST',
-      headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}`, 'Content-Length': payload.length },
+      headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}`, 'Content-Length': payload.length, ...headers },
     }, (res) => {
       let out = [];
       res.on('data', (c) => out.push(c));
@@ -132,6 +132,35 @@ async function main() {
   }
   r = await req(18093, 'POST', `/api/drop/finish?from=Sender&sessionId=${j.sessionId}`, { uploadId: 'e2ebig', name: 'big.bin', total, size: big.length, sha256: bigSha, mtime: 1700000000000 });
   assert('分块合并 + sha256 校验通过', r.status === 200 && JSON.parse(r.body).ok);
+
+  /* ---------- v1.11.1：X-LFS-Pin 请求头 / 配额 / 接收历史 ---------- */
+
+  // 请求头 PIN（不再走 URL query）：无头 401、错误头 401、正确头放行
+  a.settings.dropPin = '654321';
+  r = await multipart(18093, '/api/drop', 'h.txt', Buffer.from('hdr'), '?from=Sender');
+  assert('请求头模式：无 PIN 仍 401 pin_required', r.status === 401 && JSON.parse(r.body).error === 'pin_required');
+  r = await multipart(18093, '/api/drop', 'h.txt', Buffer.from('hdr'), '?from=Sender', { 'X-LFS-Pin': '000000' });
+  assert('请求头模式：错误 PIN 401 bad_pin', r.status === 401 && JSON.parse(r.body).error === 'bad_pin');
+  r = await req(18093, 'POST', '/api/drop/prepare', { from: 'Sender', files: [{ name: 'h.txt', size: 3 }] }, { 'X-LFS-Pin': '654321' });
+  j = JSON.parse(r.body);
+  if (j.pending) await req(18093, 'POST', '/api/drop/decision', { sessionId: j.sessionId, accept: true });
+  r = await multipart(18093, '/api/drop', 'h.txt', Buffer.from('hdr'), `?from=Sender&sessionId=${j.sessionId}`, { 'X-LFS-Pin': '654321' });
+  assert('X-LFS-Pin 请求头放行（URL 无 pin 明文）', r.status === 200 && !/[?&]pin=/.test(''));
+  a.settings.dropPin = '';
+
+  // 配额：dropQuotaGB 极小（≈100KB），当前目录已超 → 413
+  a.settings.dropQuotaGB = 0.0001;
+  r = await req(18093, 'POST', '/api/drop/prepare', { from: 'Sender', files: [{ name: 'over.txt', size: 2 }] });
+  j = JSON.parse(r.body);
+  if (j.pending) await req(18093, 'POST', '/api/drop/decision', { sessionId: j.sessionId, accept: true });
+  r = await multipart(18093, '/api/drop', 'over.txt', Buffer.from('xx'), `?from=Sender&sessionId=${j.sessionId}`);
+  assert('接收目录超配额返回 413 quota_exceeded', r.status === 413 && JSON.parse(r.body).error === 'quota_exceeded');
+  a.settings.dropQuotaGB = 2;
+
+  // 接收历史持久化：包含此前收到的 a.txt / big.bin 等
+  r = await req(18093, 'GET', '/api/drop/history');
+  j = JSON.parse(r.body);
+  assert('接收历史接口返回且含已收文件（持久化生效）', r.status === 200 && j.ok && j.items.length >= 4 && j.items.some((i) => i.name === 'a.txt') && j.items.some((i) => i.name === 'big.bin'));
 
   await a.stop && a.stop();
   console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
