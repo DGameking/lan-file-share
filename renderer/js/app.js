@@ -501,6 +501,11 @@
       function onCheck(e, key) {
         save({ [key]: e.target.checked });
       }
+      // 主题切换：保存设置并立即生效（无需重启）
+      function onTheme(e) {
+        applyTheme(e.target.value);
+        save({ theme: e.target.value });
+      }
       const fps = computed(() => store.self.fingerprint || '-');
       const httpsChanged = ref(false);
       async function onHttps(e) {
@@ -606,7 +611,7 @@
       // 启动时静默自动检查（24h 节流，由引擎控制）
       checkUpdate(true);
 
-      return { store, save, onText, onCheck, fps, copy, onHttps, httpsChanged, relaunch, diag, diagRunning, runDiag, openLogsDir, rzStatus, fmtTs,
+      return { store, save, onText, onCheck, onTheme, fps, copy, onHttps, httpsChanged, relaunch, diag, diagRunning, runDiag, openLogsDir, rzStatus, fmtTs,
                updateInfo, checking, checkUpdate, openUpdateUrl, serverAddr, copyServerAddr, openAdmin,
                dl, startDownload, abortDownload, installNow };
     },
@@ -623,7 +628,13 @@
                 <option value="read">只读</option><option value="write">可写</option><option value="admin">管理</option>
               </select>
             </label>
+            <label class="field">主题
+              <select :value="store.settings.theme || 'system'" @change="onTheme($event)" style="width:110px">
+                <option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option>
+              </select>
+            </label>
           </div>
+          <div class="muted" style="margin-top:6px">主题切换即时生效；「跟随系统」下界面随操作系统的浅/深色自动切换</div>
         </div>
 
         <div class="card">
@@ -1205,6 +1216,17 @@
     `,
   });
 
+  // ---------------- 主题（v1.15.0：跟随系统/浅色/深色） ----------------
+  // settings.theme: 'system' | 'light' | 'dark'；system 时移除 data-theme 交给 prefers-color-scheme
+  function applyTheme(mode) {
+    const m = mode || 'system';
+    const root = document.documentElement;
+    root.removeAttribute('data-theme');
+    if (m === 'dark') root.setAttribute('data-theme', 'dark');
+    else if (m === 'light') root.setAttribute('data-theme', 'light');
+    if (window.lan && window.lan.setTheme) window.lan.setTheme(m); // 同步标题栏配色
+  }
+
   // ---------------- 根组件 ----------------
   const App = defineComponent({
     components: { Dashboard, SharesView, DevicesView, SettingsView, LogsView, ChatView, DropView },
@@ -1224,11 +1246,15 @@
 
       onMounted(() => {
         refresh();
+        // 主题与平台适配：settings.theme 驱动双主题；darwin 加 body.darwin（红绿灯占位）
+        applyTheme(store.settings && store.settings.theme);
+        if (window.lan && window.lan.platform === 'darwin') document.body.classList.add('darwin');
         // 兜底轮询：事件推送之外，每 5 秒对齐一次全量快照，保证信息始终统一
         setInterval(() => refresh().catch(() => {}), 5000);
         api.on('nav', (t) => { if (t) tab.value = t; }); // 托盘/全局快捷键跳转
         api.on('devices', (list) => (store.devices = list));
         api.on('shares', (list) => (store.shares = list));
+        api.on('settings', (s) => { store.settings = s; applyTheme(s && s.theme); });
         api.on('settings', (s) => (store.settings = s));
         api.on('stats', (s) => (store.stats = s));
         api.on('ready', (snap) => { if (snap) Object.assign(store, snap); });

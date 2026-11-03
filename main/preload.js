@@ -32,6 +32,12 @@ const API = {
   quit() {
     ipcRenderer.send('win:quit');
   },
+  // 运行平台（darwin/win32/linux）：渲染层据此做平台化 UI 适配（如 macOS 红绿灯）
+  platform: process.platform,
+  // 主题（system/light/dark）：同步 Electron nativeTheme，让标题栏与页面主题一致
+  setTheme(mode) {
+    ipcRenderer.send('app:setTheme', mode);
+  },
 };
 
 contextBridge.exposeInMainWorld('lan', API);

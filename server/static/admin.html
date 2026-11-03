@@ -4,14 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>管理控制台 · 局域网文件共享</title>
+    <link rel="stylesheet" href="/theme.css" />
+    <script src="/theme.js"></script>
     <style>
-      :root {
-        --bg: #0f1115; --bg-soft: #161a22; --bg-card: #1c222c;
-        --border: #2a313d; --text: #e6e9ef; --text-dim: #9aa3b2;
-        --primary: #4f8cff; --primary-dim: #2f5fb0;
-        --green: #36c08a; --red: #ef5a6a; --yellow: #e0a64b;
-        --radius: 10px;
-      }
+      /* 主题 tokens 来自 /theme.css（浅/深双主题 + 跟随系统），此处仅页面私有样式 */
       * { box-sizing: border-box; }
       html, body { margin: 0; height: 100%; }
       body {
@@ -25,7 +21,7 @@
       #app { display: none; height: 100vh; flex-direction: column; }
       .topbar {
         height: 52px; flex: 0 0 52px; display: flex; align-items: center;
-        padding: 0 16px; background: linear-gradient(180deg, #1a2029 0%, var(--bg-soft) 100%);
+        padding: 0 16px; background: var(--topbar-grad);
         border-bottom: 1px solid var(--border); gap: 14px;
       }
       .topbar .title { font-weight: 600; font-size: 15px; }
@@ -47,8 +43,8 @@
       }
 
       .layout { flex: 1; display: flex; min-height: 0; }
-      .default-warn { flex: 0 0 auto; background: rgba(255, 179, 64, .12); border-bottom: 1px solid #ff9f43; color: #ffb340; font-size: 13px; padding: 10px 18px; line-height: 1.6; }
-      .default-warn b { color: #ffd27a; }
+      .default-warn { flex: 0 0 auto; background: rgba(255, 179, 64, .12); border-bottom: 1px solid var(--yellow); color: var(--yellow); font-size: 13px; padding: 10px 18px; line-height: 1.6; }
+      .default-warn b { color: var(--yellow); }
       .sidebar {
         width: 184px; flex: 0 0 184px; background: var(--bg-soft);
         border-right: 1px solid var(--border); padding: 12px 10px; overflow-y: auto;
@@ -123,7 +119,7 @@
       .stat:nth-child(3)::before { background: var(--yellow); }
       .stat:nth-child(4)::before { background: #a78bfa; }
       .stat:nth-child(5)::before { background: #38bdf8; }
-      .stat b { display: block; font-size: 24px; margin-top: 4px; background: linear-gradient(90deg,#fff,#c6d4f0); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+      .stat b { display: block; font-size: 24px; margin-top: 4px; color: var(--text); }
       .stat span { font-size: 12px; color: var(--text-dim); }
 
       .toolbar { display: flex; gap: 8px; margin: 0 0 14px; flex-wrap: wrap; align-items: center; }
@@ -168,8 +164,8 @@
 
       /* 自定义滚动条 */
       ::-webkit-scrollbar { width: 10px; height: 10px; }
-      ::-webkit-scrollbar-thumb { background: #2c3442; border-radius: 6px; border: 2px solid var(--bg); }
-      ::-webkit-scrollbar-thumb:hover { background: #3a4456; }
+      ::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 6px; border: 2px solid var(--bg); }
+      ::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
       ::-webkit-scrollbar-track { background: transparent; }
 
       @media (max-width: 720px) {
@@ -180,7 +176,7 @@
     </style>
   </head>
   <body>
-    <!-- 主界面（应用外壳） -->
+    <!-- 主题切换（theme.js 已在 head 同步加载；按钮在 Vue 模板内，逻辑挂在全局由 Vue onMounted 绑定） -->
     <div id="app">
       <header class="topbar">
         <div class="title">🛠 管理控制台</div>
@@ -190,6 +186,7 @@
           <a href="/admin" class="active">🛠 管理台</a>
         </nav>
         <div class="spacer"></div>
+        <button class="btn ghost sm" id="btnTheme" title="切换主题">🌓</button>
         <div class="who" v-if="self.deviceName">
           <span class="pill" :class="remote ? 'blue' : 'green'">{{ remote ? '远程' : '本机' }}</span>
           <b>{{ self.deviceName }}</b>
@@ -393,7 +390,7 @@
         <div class="modal" style="width:min(560px,92vw)">
           <h3>选择要共享的目录</h3>
           <div class="small muted" style="word-break:break-all;margin-bottom:8px">当前：{{ dirBrowser.path || '（选择一个起始位置）' }}</div>
-          <div v-if="dirBrowser.error" class="small" style="color:#ff7d7d;margin-bottom:8px">{{ dirBrowser.error }}</div>
+          <div v-if="dirBrowser.error" class="small" style="color:var(--red);margin-bottom:8px">{{ dirBrowser.error }}</div>
           <div style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:8px">
             <div v-if="dirBrowser.path && dirBrowser.parent !== null" class="diritem" @click="navDir(dirBrowser.parent)">↩️ 返回上一级</div>
             <div v-for="r in dirBrowser.roots" v-if="!dirBrowser.path" :key="r.path" class="diritem" @click="navDir(r.path)">
@@ -706,6 +703,15 @@
             }
           }
           onMounted(boot);
+          onMounted(() => {
+            // 主题切换按钮（在 Vue 模板内，挂载后绑定；theme.js 已在 head 同步加载）
+            const tb = document.getElementById('btnTheme');
+            if (tb && window.LfsTheme) {
+              const sync = () => { tb.textContent = window.LfsTheme.icon(); tb.title = '主题：' + window.LfsTheme.label() + '（点击切换）'; };
+              sync();
+              tb.addEventListener('click', () => { window.LfsTheme.cycle(); sync(); });
+            }
+          });
 
           // ---- 目录浏览器（NAS 场景无系统选择器，走 storage API 导航） ----
           const dirBrowser = reactive({ open: false, loading: false, error: '', roots: [], path: '', parent: null, dirs: [] });

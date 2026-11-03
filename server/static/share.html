@@ -4,21 +4,20 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>局域网文件共享</title>
+    <link rel="stylesheet" href="/theme.css" />
+    <script src="/theme.js"></script>
     <style>
-      :root {
-        --bg: #0f1115; --panel: #1a1d24; --line: #2a2e38; --text: #e6e8ec; --muted: #9aa0aa;
-        --accent: #4f8cff; --green: #36c275; --red: #ff5d5d;
-      }
+      /* 主题 tokens 来自 /theme.css（浅/深双主题 + 跟随系统） */
       * { box-sizing: border-box; }
       html, body { margin: 0; height: 100%; }
       body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
         background: var(--bg); color: var(--text); display: flex; flex-direction: column; height: 100vh; overflow: hidden;
         -webkit-font-smoothing: antialiased; }
       ::-webkit-scrollbar { width: 10px; height: 10px; }
-      ::-webkit-scrollbar-thumb { background: #2c3442; border-radius: 6px; border: 2px solid var(--bg); }
-      ::-webkit-scrollbar-thumb:hover { background: #3a4456; }
+      ::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 6px; border: 2px solid var(--bg); }
+      ::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
       ::-webkit-scrollbar-track { background: transparent; }
-      header { flex: 0 0 auto; padding: 14px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: linear-gradient(180deg, #1a2029 0%, #161a22 100%); }
+      header { flex: 0 0 auto; padding: 14px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--topbar-grad); }
       header h1 { font-size: 18px; margin: 0; }
       /* 全局跨页导航（门户/会话/管理台 同框跳转） */
       .g-nav { display: flex; gap: 6px; margin-left: 4px; }
@@ -42,7 +41,7 @@
       table { width: 100%; border-collapse: collapse; }
       th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); font-size: 14px; }
       th { color: var(--muted); font-weight: 500; }
-      tr.row:hover { background: #20242d; }
+      tr.row:hover { background: var(--hover); }
       .icon { width: 22px; display: inline-block; text-align: center; }
       .name { cursor: pointer; }
       .name:hover { color: var(--accent); }
@@ -58,7 +57,7 @@
       .pwd-mask { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none; align-items: center; justify-content: center; z-index: 60; }
       .pwd-mask.open { display: flex; }
       .pwd-box { background: var(--panel); padding: 24px; border-radius: 12px; border: 1px solid var(--line); width: 320px; }
-      .pwd-box input { width: 100%; padding: 9px; margin: 10px 0; border-radius: 8px; border: 1px solid var(--line); background: #11141a; color: var(--text); }
+      .pwd-box input { width: 100%; padding: 9px; margin: 10px 0; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
       .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel);
         border: 1px solid var(--line); padding: 10px 16px; border-radius: 10px; font-size: 13px; opacity: 0; transition: .3s; z-index: 70; }
       .toast.show { opacity: 1; }

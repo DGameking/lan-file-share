@@ -248,6 +248,9 @@ class LanFileShare extends require('events').EventEmitter {
     const staticDir = path.join(__dirname, 'static');
     app.get('/manifest.webmanifest', (req, res) => res.type('application/manifest+json').sendFile(path.join(staticDir, 'manifest.webmanifest')));
     app.get('/sw.js', (req, res) => res.type('application/javascript').sendFile(path.join(staticDir, 'sw.js')));
+    // 共享主题 tokens（浅/深双主题，v1.15.0）：所有 Web 页面通用，须在鉴权前可达
+    app.get('/theme.css', (req, res) => res.type('text/css').sendFile(path.join(staticDir, 'theme.css')));
+    app.get('/theme.js', (req, res) => res.type('application/javascript').sendFile(path.join(staticDir, 'theme.js')));
     app.get('/icons/:name', (req, res) => {
       const name = path.basename(req.params.name || '');
       if (!/^icon-\d+\.png$/.test(name)) return res.status(404).end();
@@ -992,8 +995,8 @@ class LanFileShare extends require('events').EventEmitter {
       .join('');
     return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
       <meta name="theme-color" content="#4f8cff"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icons/icon-192.png">
+      <link rel="stylesheet" href="/theme.css"><script src="/theme.js"></script>
       <title>局域网文件共享</title><style>
-      :root{--bg:#0f1115;--panel:#1a1d24;--line:#2a2e38;--text:#e6e8ec;--muted:#9aa0aa;--accent:#4f8cff}
       *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
       .wrap{max-width:760px;margin:0 auto;padding:32px 20px}h1{font-size:22px;margin:0 0 4px}.sub{color:var(--muted);font-size:14px;margin-bottom:24px}
       .sub b{color:var(--text);letter-spacing:1px}
@@ -1008,8 +1011,8 @@ class LanFileShare extends require('events').EventEmitter {
       .dot{width:8px;height:8px;border-radius:50%}.dot.on{background:#36c275}.dot.off{background:#ff5d5d}
       .perm{margin-left:auto;font-size:12px;color:var(--muted)}.path{font-size:12px;color:var(--muted);margin-top:6px;word-break:break-all}
       .empty{color:var(--muted);font-size:14px}.empty a{color:var(--accent)}
-      .warnbox{background:rgba(255,179,64,.12);border:1px solid #ff9f43;color:#ffb340;font-size:13px;padding:12px 16px;border-radius:10px;margin-bottom:24px;line-height:1.6}.warnbox b{color:#ffd27a}
-      .g-nav{display:flex;gap:6px;margin-bottom:20px}.g-nav a{display:inline-flex;align-items:center;gap:5px;padding:7px 13px;border-radius:9px;font-size:13px;color:var(--muted);text-decoration:none;border:1px solid var(--line);background:var(--panel)}
+      .warnbox{background:rgba(255,179,64,.12);border:1px solid var(--yellow);color:var(--yellow);font-size:13px;padding:12px 16px;border-radius:10px;margin-bottom:24px;line-height:1.6}.warnbox b{color:var(--yellow)}
+      .g-nav{display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap}.g-nav a{display:inline-flex;align-items:center;gap:5px;padding:7px 13px;border-radius:9px;font-size:13px;color:var(--muted);text-decoration:none;border:1px solid var(--line);background:var(--panel);cursor:pointer}
       .g-nav a:hover{border-color:var(--accent)}.g-nav a.active{background:var(--accent);color:#fff;border-color:var(--accent)}</style></head>
       <body><div class="wrap"><h1>局域网文件共享平台</h1>
       <div class="sub">本机地址：http://${this.localIp}:${this.httpPort}${this.fingerprint ? ' · 识别码 <b>' + ('LF-' + this.fingerprint.slice(0, 4) + '-' + this.fingerprint.slice(4, 8)).toUpperCase() + '</b>' : ''}</div>
@@ -1017,7 +1020,9 @@ class LanFileShare extends require('events').EventEmitter {
         <a href="/" class="active">🏠 门户</a>
         <a href="/chat">💬 会话</a>
         <a href="/admin">🛠 管理台</a>
+        <a id="themeBtn" title="切换主题">🌓 <span id="themeLbl">主题</span></a>
       </div>
+      <script>(function(){var b=document.getElementById('themeBtn');if(!window.LfsTheme)return;function sync(){document.getElementById('themeLbl').textContent=window.LfsTheme.label();b.title='主题：'+window.LfsTheme.label()+'（点击切换）';}sync();b.onclick=function(){window.LfsTheme.cycle();sync();};})();</script>
       <div class="entry">
         <a href="/chat"><b>💬 统一会话</b><span>所有设备同框聊天 · 传文件 · 音视频通话</span></a>
         <a href="/admin"><b>🛠 管理控制台</b><span>共享 / 设备 / 日志 / 设置（本机免登录）</span></a>

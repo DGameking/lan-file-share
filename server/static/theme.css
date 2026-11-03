@@ -1,0 +1,98 @@
+/* ============================================================
+ * 全端共享主题 tokens（v1.15.0 起）
+ * 适用：/chat、/admin、/share、门户页（桌面端 renderer/css/style.css 同步维护同名变量）
+ * 变量并集：
+ *   桌面/admin 系：--bg --bg-soft --bg-card --border --text --text-dim --primary --primary-dim --green --red --yellow --radius
+ *   chat 系：      --panel --line --txt --muted --accent --accent-soft --ok --warn
+ *   share/门户系： --panel --line --text --muted --accent --green --red
+ *   布局辅助：    --topbar-grad --hover --scroll-thumb --scroll-thumb-hover
+ * 模式：浅色为默认；深色在 [data-theme="dark"] 或系统深色时生效；
+ *      data-theme="light" 可强制浅色（由 /theme.js 管理）。
+ * ============================================================ */
+
+:root {
+  /* 浅色 */
+  --bg: #f3f5f9;
+  --bg-soft: #eef1f7;
+  --bg-card: #ffffff;
+  --panel: #ffffff;
+  --border: #e4e8f0;
+  --line: #e4e8f0;
+  --text: #1f2937;
+  --txt: #1f2937;
+  --text-dim: #6b7280;
+  --muted: #6b7280;
+  --primary: #2563eb;
+  --primary-dim: #1e50c8;
+  --accent: #2563eb;
+  --accent-soft: #eff6ff;
+  --green: #16a34a;
+  --ok: #16a34a;
+  --red: #dc2626;
+  --warn: #dc2626;
+  --yellow: #b45309;
+  --radius: 10px;
+  --topbar-grad: linear-gradient(180deg, #ffffff 0%, #f3f5f9 100%);
+  --hover: #eef2f8;
+  --scroll-thumb: #c8d2e0;
+  --scroll-thumb-hover: #aebbd0;
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  /* 深色（沿用原桌面端深色调） */
+  --bg: #0f1115;
+  --bg-soft: #161a22;
+  --bg-card: #1c222c;
+  --panel: #1c222c;
+  --border: #2a313d;
+  --line: #2a313d;
+  --text: #e6e9ef;
+  --txt: #e6e9ef;
+  --text-dim: #9aa3b2;
+  --muted: #9aa3b2;
+  --primary: #4f8cff;
+  --primary-dim: #2f5fb0;
+  --accent: #4f8cff;
+  --accent-soft: #1c2739;
+  --green: #36c08a;
+  --ok: #36c275;
+  --red: #ef5a6a;
+  --warn: #ef5a6a;
+  --yellow: #e0a64b;
+  --topbar-grad: linear-gradient(180deg, #1a2029 0%, #161a22 100%);
+  --hover: #232b3a;
+  --scroll-thumb: #2c3442;
+  --scroll-thumb-hover: #3a4456;
+  color-scheme: dark;
+}
+
+/* 跟随系统（未手动指定时） */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']):not([data-theme='dark']) {
+    --bg: #0f1115;
+    --bg-soft: #161a22;
+    --bg-card: #1c222c;
+    --panel: #1c222c;
+    --border: #2a313d;
+    --line: #2a313d;
+    --text: #e6e9ef;
+    --txt: #e6e9ef;
+    --text-dim: #9aa3b2;
+    --muted: #9aa3b2;
+    --primary: #4f8cff;
+    --primary-dim: #2f5fb0;
+    --accent: #4f8cff;
+    --accent-soft: #1c2739;
+    --green: #36c08a;
+    --ok: #36c275;
+    --red: #ef5a6a;
+    --warn: #ef5a6a;
+    --yellow: #e0a64b;
+    --topbar-grad: linear-gradient(180deg, #1a2029 0%, #161a22 100%);
+    --hover: #232b3a;
+    --scroll-thumb: #2c3442;
+    --scroll-thumb-hover: #3a4456;
+    color-scheme: dark;
+  }
+}

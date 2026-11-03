@@ -1,4 +1,32 @@
+/* ============================================================
+ * 双主题 tokens（v1.15.0）：浅色为默认，深色跟随系统或手动切换。
+ * 切换机制：设置页「主题」写入 engine settings.theme（system/light/dark），
+ *           app.js 据此在 <html> 上设 data-theme（system 时移除），
+ *           并经 IPC app:setTheme 同步 Electron nativeTheme（标题栏跟随）。
+ * 变量命名与 server/static/theme.css 保持同一套（桌面端此处独立维护）。
+ * ============================================================ */
 :root {
+  /* 浅色 */
+  --bg: #f3f5f9;
+  --bg-soft: #eef1f7;
+  --bg-card: #ffffff;
+  --border: #e4e8f0;
+  --text: #1f2937;
+  --text-dim: #6b7280;
+  --primary: #2563eb;
+  --primary-dim: #1e50c8;
+  --green: #16a34a;
+  --red: #dc2626;
+  --yellow: #b45309;
+  --radius: 10px;
+  --topbar-grad: linear-gradient(180deg, #ffffff 0%, #f3f5f9 100%);
+  --hover: #eef2f8;
+  --scroll-thumb: #c8d2e0;
+  --scroll-thumb-hover: #aebbd0;
+}
+
+:root[data-theme='dark'] {
+  /* 深色 */
   --bg: #0f1115;
   --bg-soft: #161a22;
   --bg-card: #1c222c;
@@ -10,7 +38,31 @@
   --green: #36c08a;
   --red: #ef5a6a;
   --yellow: #e0a64b;
-  --radius: 10px;
+  --topbar-grad: linear-gradient(180deg, #1a2029 0%, #161a22 100%);
+  --hover: #141924;
+  --scroll-thumb: #2c3442;
+  --scroll-thumb-hover: #3a4456;
+}
+
+/* 跟随系统（未手动指定时） */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']):not([data-theme='dark']) {
+    --bg: #0f1115;
+    --bg-soft: #161a22;
+    --bg-card: #1c222c;
+    --border: #2a313d;
+    --text: #e6e9ef;
+    --text-dim: #9aa3b2;
+    --primary: #4f8cff;
+    --primary-dim: #2f5fb0;
+    --green: #36c08a;
+    --red: #ef5a6a;
+    --yellow: #e0a64b;
+    --topbar-grad: linear-gradient(180deg, #1a2029 0%, #161a22 100%);
+    --hover: #141924;
+    --scroll-thumb: #2c3442;
+    --scroll-thumb-hover: #3a4456;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -53,6 +105,10 @@ input, select { font-family: inherit; }
   font-size: 16px; border-radius: 6px;
 }
 .topbar .winbtn:hover { background: var(--bg-card); color: var(--text); }
+/* 平台差异（v1.15.0）：macOS 用系统红绿灯，隐藏自绘窗口按钮并留出占位 */
+body.darwin .topbar { padding-left: 84px; }
+body.darwin .topbar .winbtn { display: none; }
+body.darwin .sidebar { padding-top: 16px; }
 
 /* 布局 */
 .layout { flex: 1; display: flex; min-height: 0; }
@@ -137,8 +193,8 @@ th { color: var(--text-dim); font-weight: 500; }
 
 /* 自定义滚动条 */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: #2c3442; border-radius: 6px; border: 2px solid var(--bg); }
-::-webkit-scrollbar-thumb:hover { background: #3a4456; }
+::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 6px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
 ::-webkit-scrollbar-track { background: transparent; }
 
 /* 侧栏导航：胶囊高亮 + 微动效 */
@@ -156,7 +212,7 @@ th { color: var(--text-dim); font-weight: 500; }
 
 /* 顶栏渐变 + 毛玻璃 */
 .topbar {
-  background: linear-gradient(180deg, #1a2029 0%, var(--bg-soft) 100%);
+  background: var(--topbar-grad);
   backdrop-filter: blur(8px);
 }
 
@@ -175,7 +231,7 @@ th { color: var(--text-dim); font-weight: 500; }
 .stat:nth-child(2)::before { background: var(--green); }
 .stat:nth-child(3)::before { background: var(--yellow); }
 .stat:nth-child(4)::before { background: #a78bfa; }
-.stat .n { background: linear-gradient(90deg, #fff, #c6d4f0); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.stat .n { color: var(--text); }
 
 /* 表格行悬停 */
 tbody tr { transition: background .12s ease; }
@@ -196,7 +252,7 @@ tbody tr:hover { background: rgba(79, 140, 255, .05); }
   transition: border-color .15s ease, background .15s ease, box-shadow .15s ease, transform .12s ease;
   cursor: pointer;
 }
-.device-card:hover { border-color: var(--primary-dim); background: #141924; }
+.device-card:hover { border-color: var(--primary-dim); background: var(--hover); }
 .device-card.hover {
   border-color: var(--primary);
   border-style: solid;
@@ -263,9 +319,9 @@ tbody tr:hover { background: rgba(79, 140, 255, .05); }
 .dev-card .dc-avatar { width: 38px; height: 38px; font-size: 16px; border-radius: 10px; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 4px; vertical-align: middle; }
 .dot.on { background: var(--green); box-shadow: 0 0 6px rgba(54,192,138,.8); }
-.dot.off2 { background: #566; }
+.dot.off2 { background: var(--text-dim); opacity:.5; }
 .dev-card .dc-actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; border-top: 1px dashed var(--border); padding-top: 10px; }
 
 /* 收件箱单文件操作 */
-.recv-file .recv-act { margin-left: 6px; font-size: 11px; color: #3b82f6; cursor: pointer; text-decoration: none; }
+.recv-file .recv-act { margin-left: 6px; font-size: 11px; color: var(--primary); cursor: pointer; text-decoration: none; }
 .recv-file .recv-act:hover { text-decoration: underline; }

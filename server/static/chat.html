@@ -12,11 +12,12 @@
 <link rel="icon" href="/icons/icon-192.png" />
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
 <title>局域网会话</title>
+<link rel="stylesheet" href="/theme.css" />
+<script src="/theme.js"></script>
 <style>
 :root{
-  --bg:#f3f5f9;--panel:#ffffff;--line:#e4e8f0;--txt:#1f2937;--muted:#6b7280;
-  --accent:#2563eb;--accent-soft:#eff6ff;--bubble-me:#2563eb;--bubble-other:#ffffff;
-  --ok:#16a34a;--warn:#dc2626;
+  /* 页面私有变量（主题 tokens 来自 /theme.css） */
+  --bubble-me:var(--accent);--bubble-other:var(--panel);
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
@@ -41,6 +42,9 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
 .header .t{font-size:15px;font-weight:700}
 .header .sub{font-size:12px;color:var(--muted)}
 .header .sp{flex:1}
+/* 头部按钮分组：主题切换独立，通话类聚在一起；移动端只留图标 */
+.hgroup{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.hgroup .sep{width:1px;height:22px;background:var(--line);margin:0 2px}
 /* 全局跨页导航（门户/会话/管理台 同框跳转） */
 .g-topnav{display:flex;align-items:center;gap:8px;background:var(--panel);border-bottom:1px solid var(--line);padding:8px 14px;flex:0 0 auto}
 .g-topnav .brand{font-weight:700;font-size:14px;margin-right:4px}
@@ -56,10 +60,10 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
 .btn:disabled{opacity:.5;cursor:not-allowed}
 /* 消息区 */
 .msgs{flex:1;overflow-y:auto;padding:18px 22px;display:flex;flex-direction:column;gap:4px}
-.older-btn{margin:0 0 10px;align-self:center;background:#eef2f8;border:1px solid #dde3ee;color:#4a5568;border-radius:14px;padding:5px 16px;font-size:12px;cursor:pointer}
-.older-btn:hover{background:#e2e8f3}
+.older-btn{margin:0 0 10px;align-self:center;background:var(--hover);border:1px solid var(--border);color:var(--muted);border-radius:14px;padding:5px 16px;font-size:12px;cursor:pointer}
+.older-btn:hover{background:var(--accent-soft);color:var(--accent)}
 .older-btn:disabled{opacity:.5;cursor:default}
-.day{align-self:center;font-size:11px;color:var(--muted);background:#e8ecf3;border-radius:10px;padding:2px 10px;margin:10px 0}
+.day{align-self:center;font-size:11px;color:var(--muted);background:var(--hover);border-radius:10px;padding:2px 10px;margin:10px 0}
 .row-m{display:flex;gap:10px;margin-top:8px;align-items:flex-end}
 .row-m.me{flex-direction:row-reverse}
 .bubble{max-width:min(560px,72%);padding:8px 12px;border-radius:14px;font-size:14px;line-height:1.55;word-break:break-word;white-space:pre-wrap}
@@ -74,7 +78,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
 .f-name{font-size:13px;font-weight:600;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .f-size{font-size:11px;opacity:.75}
 .img-prev{max-width:260px;max-height:200px;border-radius:10px;display:block;margin-top:4px;cursor:pointer}
-.file-offline{font-size:12px;color:var(--muted);background:#f1f3f8;border-radius:8px;padding:6px 10px;margin-top:4px}
+.file-offline{font-size:12px;color:var(--muted);background:var(--hover);border-radius:8px;padding:6px 10px;margin-top:4px}
 .typing{font-size:12px;color:var(--muted);height:18px;padding:0 22px 4px}
 /* 输入区 */
 .composer{background:var(--panel);border-top:1px solid var(--line);padding:10px 14px;display:flex;flex-direction:column;gap:8px}
@@ -85,7 +89,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
 .c-row{display:flex;gap:8px;align-items:flex-end}
 .c-row textarea{flex:1;border:1px solid var(--line);border-radius:12px;padding:9px 12px;font-size:14px;font-family:inherit;resize:none;max-height:120px;outline:none}
 .c-row textarea:focus{border-color:var(--accent)}
-.icon-btn{width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:#fff;font-size:17px;cursor:pointer;flex-shrink:0}
+.icon-btn{width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--txt);font-size:17px;cursor:pointer;flex-shrink:0}
 .icon-btn:hover{background:var(--accent-soft)}
 /* 通话层 */
 .callbar{position:fixed;top:0;left:0;right:0;z-index:50;background:rgba(17,24,39,.92);color:#fff;padding:10px 18px;display:flex;align-items:center;gap:14px}
@@ -103,6 +107,10 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
 .m-topbar{display:none}
 @media (max-width:640px){
   .bubble{max-width:84%}
+  .header{flex-wrap:wrap;row-gap:6px}
+  .hgroup{flex-basis:100%;justify-content:flex-start}
+  .header .btn{padding:7px 10px}
+  .header .btn .lbl{display:none}
   .g-topnav{display:none}
   .m-nav{display:inline-flex;align-items:center;font-size:13px;color:var(--txt);text-decoration:none;padding:5px 9px;border:1px solid var(--line);border-radius:8px}
   .m-nav:hover{background:var(--accent-soft);color:var(--accent)}
@@ -121,7 +129,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
 #iosHint b{color:#7cb0ff}
 #iosHint .x{float:right;color:#94a3b8;padding:0 4px;font-size:16px;cursor:pointer}
 .modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:60;display:flex;align-items:center;justify-content:center}
-.modal{background:#fff;border-radius:14px;padding:22px;max-width:92vw;max-height:88vh;overflow:auto;text-align:center}
+.modal{background:var(--panel);color:var(--txt);border-radius:14px;padding:22px;max-width:92vw;max-height:88vh;overflow:auto;text-align:center}
 .modal img{max-width:80vw;max-height:75vh}
 /* 拖拽投送遮罩 */
 #dropOverlay{position:fixed;inset:0;z-index:70;background:rgba(37,99,235,.14);backdrop-filter:blur(2px);display:none;align-items:center;justify-content:center;pointer-events:none}
@@ -160,11 +168,16 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
         <div class="sub" id="subInfo">连接中…</div>
       </div>
       <span class="sp"></span>
-      <button class="btn ghost" id="btnScreen" style="display:none">🖥 屏幕共享</button>
-      <button class="btn ghost" id="btnClear" title="清空所有会话记录（所有设备同步清空）">🧹</button>
-      <button class="btn ghost" id="btnAudio">🎙 语音通话</button>
-      <button class="btn ghost" id="btnVideo">📹 视频通话</button>
-      <button class="btn danger" id="btnHangup" style="display:none">挂断</button>
+      <div class="hgroup">
+        <button class="btn ghost" id="btnTheme" title="切换主题（跟随系统/浅色/深色）">🌓</button>
+        <button class="btn ghost" id="btnScreen" style="display:none">🖥 <span class="lbl">屏幕共享</span></button>
+        <span class="sep"></span>
+        <button class="btn ghost" id="btnAudio">🎙 <span class="lbl">语音</span></button>
+        <button class="btn ghost" id="btnVideo">📹 <span class="lbl">视频</span></button>
+        <button class="btn danger" id="btnHangup" style="display:none">挂断</button>
+        <span class="sep"></span>
+        <button class="btn ghost" id="btnClear" title="清空所有会话记录（所有设备同步清空）">🧹</button>
+      </div>
     </div>
     <div class="msgs" id="msgs"></div>
     <div class="typing" id="typing"></div>
@@ -737,6 +750,21 @@ function addVideoTile(id, name, stream, video){
   }
 }
 $('btnAudio').onclick=function(){ rtc.start('audio'); };
+// 主题三态切换（theme.js 已在 head 同步加载）
+(function(){
+  var b=$('btnTheme');
+  if(b){
+    b.textContent=window.LfsTheme ? window.LfsTheme.icon() : '🌓';
+    if(window.LfsTheme) b.title='主题：'+window.LfsTheme.label()+'（点击切换）';
+    b.onclick=function(){
+      if(!window.LfsTheme) return;
+      var m=window.LfsTheme.cycle();
+      b.textContent=window.LfsTheme.icon();
+      b.title='主题：'+window.LfsTheme.label()+'（点击切换）';
+      if(m==='system') appendSys('主题已恢复跟随系统');
+    };
+  }
+})();
 $('btnClear').onclick=function(){
   if(!confirm('确定清空所有设备的会话记录吗？此操作不可恢复。')) return;
   fetch('/api/chat/clear',{method:'POST'}).catch(function(){});

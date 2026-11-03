@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, shell, dialog, Menu, clipboard, Notification, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu, clipboard, Notification, globalShortcut, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const LanFileShare = require('../server');
@@ -53,7 +53,7 @@ function createWindow() {
     minWidth: 880,
     minHeight: 600,
     title: '局域网文件共享',
-    backgroundColor: '#0f1115',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0f1115' : '#f3f5f9',
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -261,6 +261,11 @@ function registerIpc() {
   ipcMain.on('app:relaunch', () => {
     app.relaunch();
     app.exit(0);
+  });
+
+  // 主题同步（system/light/dark）：nativeTheme 驱动 prefers-color-scheme 与标题栏配色
+  ipcMain.on('app:setTheme', (_e, mode) => {
+    nativeTheme.themeSource = mode === 'dark' ? 'dark' : mode === 'light' ? 'light' : 'system';
   });
 
   // 窗口控制

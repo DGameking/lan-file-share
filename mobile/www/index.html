@@ -37,6 +37,15 @@ button:active{opacity:.85}
   <button id="shareGo">投 送</button>
   <div class="tip" id="shareResult" style="display:none"></div>
 </div>
+<div class="card" id="homeCard" style="display:none">
+  <div class="logo">✅</div>
+  <h1 id="homeName">已连接</h1>
+  <div class="sub" id="homeAddr"></div>
+  <button id="goChat">💬 进入会话</button>
+  <button id="goPortal" style="background:#eef2f8;color:var(--txt);margin-top:10px">🏠 文件共享门户</button>
+  <button id="goAdmin" style="background:#eef2f8;color:var(--txt);margin-top:10px">🛠 管理控制台</button>
+  <div class="tip" style="text-align:center"><a href="javascript:void(0)" id="changeServer" style="color:var(--accent)">更换服务器</a></div>
+</div>
 <div class="card" id="connectCard">
   <div class="logo">📡</div>
   <h1>局域网共享</h1>
@@ -84,7 +93,7 @@ button:active{opacity:.85}
         if (!info || (!info.deviceName && !info.device_name)) throw new Error('not_target');
         localStorage.setItem('server_url', url);
         localStorage.setItem('server_name', info.deviceName || info.device_name || '');
-        location.href = url + '/chat';
+        showHome(url, info.deviceName || info.device_name || '');
       })
       .catch(function(e){
         clearTimeout(t);
@@ -98,6 +107,38 @@ button:active{opacity:.85}
         }
       });
   }
+
+  /* ---------- 已连接面板（App 二期：不再直接跳转，提供统一入口） ---------- */
+  function showHome(url, name){
+    document.getElementById('connectCard').style.display = 'none';
+    var home = document.getElementById('homeCard');
+    home.style.display = '';
+    document.getElementById('homeName').textContent = name || '已连接';
+    document.getElementById('homeAddr').textContent = url;
+    document.getElementById('goChat').onclick = function(){ location.href = url + '/chat'; };
+    document.getElementById('goPortal').onclick = function(){ location.href = url + '/'; };
+    document.getElementById('goAdmin').onclick = function(){ location.href = url + '/admin'; };
+    document.getElementById('changeServer').onclick = function(){
+      home.style.display = 'none';
+      document.getElementById('connectCard').style.display = '';
+      input.value = url;
+    };
+  }
+  // 启动：有保存的服务器地址 → 先探测，成功直接进面板，失败回落连接卡
+  (function(){
+    if (!saved) return;
+    var ctrl = new AbortController();
+    var t = setTimeout(function(){ ctrl.abort(); }, 2500);
+    fetch(saved + '/api/self', { signal: ctrl.signal })
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(info){
+        clearTimeout(t);
+        if (info && (info.deviceName || info.device_name)) {
+          showHome(saved, info.deviceName || info.device_name || '');
+        }
+      })
+      .catch(function(){ clearTimeout(t); });
+  })();
 
   document.getElementById('go').addEventListener('click', connect);
   input.addEventListener('keydown', function(e){ if (e.key === 'Enter') connect(); });
