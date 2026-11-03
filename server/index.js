@@ -38,6 +38,8 @@ const { registerApi } = require('./api');
 const ChatManager = require('./chat');
 const BridgeManager = require('./bridge');
 const dropHandler = require('./drop');
+const hubHandler = require('./hub');
+const { RendezvousClient } = require('../discovery/rendezvous');
 const browseHandler = require('./handlers/browse');
 const downloadHandler = require('./handlers/download');
 const uploadHandler = require('./handlers/upload');
@@ -144,6 +146,7 @@ class LanFileShare extends require('events').EventEmitter {
         mdns: true,
         udp: true,
         allowBeDiscovered: true,
+        rendezvous: '',
         hiddenMode: false,
         onlyTrustedVisible: false,
         firstConnectConfirm: true,
@@ -254,6 +257,9 @@ class LanFileShare extends require('events').EventEmitter {
     this.chat = new ChatManager(this);
     this.chat.register();
     dropHandler.register(this);
+    hubHandler.register(this);
+    this.rendezvous = new RendezvousClient(this);
+    this.rendezvous.start();
     browseHandler.register(this);
     downloadHandler.register(this);
     uploadHandler.register(this);

@@ -74,13 +74,23 @@
 
 约定：sha256 小文件（≤64MB）由发送端计算；分块合并后接收端整体校验；mtime 随传输还原文件时间戳。
 
-## 4. 兼容性
+## 4. 跨网段会合点（Rendezvous Hub，v1.1 实装）
+
+同光猫下多路由器不同网段（双 NAT）场景：广播/组播不跨网段、对端 NAT 拦截入站。
+方案：在跨网段可达的设备（光猫层 NAS/fpk 服务端）上启用 Hub，各网段设备**出站**注册与拉取——NAT 只拦入站，出站必然可达，全程无需穿透。
+
+- `POST /api/hub/register` `{deviceId, deviceName, port, os, version}` → `{peers: [其他网段设备], incoming: [待收中继清单], hub}`
+- `POST /api/hub/relay?target=<deviceId>&from=&sha256=&mtime=` multipart → 中心暂存（≤2GB/文件，24h TTL）
+- `GET /api/hub/relay/:id?token=&deviceId=` 接收方拉取（一次性，取后即删，sha256 校验）
+- 客户端 5s 轮询；发现的对端注入设备表并标记 `relay=true`（界面走中继路由）
+- 前置配置：所有端「设置 → 跨网段会合点」填 Hub 地址（如 `192.168.10.5:8080`）
+
+## 5. 兼容性
 
 - 未带 `sessionId` 且接收端开启自动接受 → 视为隐式批准（兼容旧发送端）；
 - 旧客户端直接 POST `/api/drop` 在自动接受模式下不受影响；自动接受关闭后旧客户端会收到 401，需升级。
 
-## 5. 路线图（对齐竞品调研报告 docs/research-localsend-spacedesk.md）
+## 6. 路线图（对齐竞品调研报告 docs/research-localsend-spacedesk.md）
 
-- v1.1：deviceType/alias 字段、逐 IP 降级发现、上传前预览缩略图（preview）
 - v1.2：与 LocalSend 协议互通网关（映射到 /api/localsend/v2/*）
 - 远期：跨设备剪贴板增强、屏幕/输入扩展（借鉴 spacedesk，需立项评估）

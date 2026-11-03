@@ -618,6 +618,7 @@
             <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.clipboardSync" @change="onCheck($event,'clipboardSync')" /> 跨设备同步剪贴板（复制即同步）</label>
             <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.autoAcceptDrop" @change="onCheck($event,'autoAcceptDrop')" /> 自动接收其他设备的投送文件</label>
             <label class="field">投送 PIN（对方投送给本机时需提供；本机投送给对方时自动携带）<input type="text" :value="store.settings.dropPin" @change="onText($event,'dropPin')" style="width:160px" placeholder="留空不启用" /></label>
+            <label class="field">跨网段会合点（中心端 IP:端口，逗号分隔；填光猫层 NAS 地址即可打通双路由器不同网段）<input type="text" :value="store.settings.rendezvous" @change="onText($event,'rendezvous')" placeholder="例：192.168.10.5:8080" /></label>
           </div>
           <div class="muted" style="margin-top:8px">剪贴板同步仅在桌面客户端之间生效；接收的文件保存在数据目录的 received 文件夹</div>
         </div>
@@ -868,8 +869,29 @@
         return 'u' + h.toString(36) + s.length.toString(36);
       }
 
+      // 中继路由：对端跨网段（经会合点发现），整文件经中心端暂存转发（≤2GB）
+      async function relayOne(d, fileLike, name) {
+        const hub = d.relay_hub || d.relayHub || `${d.host}:${d.port}`;
+        const sha = await sha256Hex(fileLike);
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          const fd = new FormData();
+          fd.append('file', fileLike, name || fileLike.name);
+          xhr.open('POST', `http://${hub}/api/hub/relay?target=${encodeURIComponent(d.device_id)}&from=${encodeURIComponent(store.self.deviceName || '')}${qs(`&sha256=${sha}&mtime=${fileLike.lastModified || ''}`)}`);
+          xhr.onload = () => (xhr.status === 200 ? resolve() : reject(new Error('HTTP ' + xhr.status)));
+          xhr.onerror = () => reject(new Error('network'));
+          xhr.send(fd);
+        });
+      }
+
       async function uploadOne(d, f, t) {
         try {
+          if (d.relay) {
+            await relayOne(d, f, f.name);
+            t.status = 'done'; t.pct = 100;
+            toast(`已中继投送给「${d.device_name}」：${f.name}`, 'ok');
+            return;
+          }
           if (f.size <= CHUNK_THRESHOLD) {
             const sha = await sha256Hex(f);
             const sid = await prepareDrop(d, [{ name: f.name, size: f.size, sha256: sha, mime: f.type || 'application/octet-stream' }], false);
@@ -944,6 +966,12 @@
         const r = await api.invoke('clip:read');
         if (!r.ok || !r.data) return toast('本机剪贴板为空', 'warn');
         try {
+          if (d.relay) {
+            const file = new File([new Blob([r.data], { type: 'text/plain' })], '剪贴板.txt', { type: 'text/plain', lastModified: Date.now() });
+            await relayOne(d, file, '剪贴板.txt');
+            toast(`剪贴板已中继投送给「${d.device_name}」`, 'ok');
+            return;
+          }
           const sid = await prepareDrop(d, [], true);
           const res = await fetch(`${base(d)}/api/drop?from=${encodeURIComponent(store.self.deviceName || '')}${qs(`&sessionId=${sid}`)}`, {
             method: 'POST',
