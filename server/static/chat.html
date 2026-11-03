@@ -72,6 +72,25 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
 .m-head{font-size:11px;color:var(--muted);margin-bottom:2px}
 .row-me .m-head{text-align:right}
 .sysmsg{align-self:center;font-size:12px;color:var(--muted);margin:6px 0}
+/* 撤回按钮：悬停自己的消息才出现 */
+.recall{display:none;margin-left:8px;font-size:11px;color:var(--muted);cursor:pointer;border:1px solid var(--line);border-radius:6px;padding:1px 6px;background:var(--panel)}
+.recall:hover{color:var(--red);border-color:var(--red)}
+.row-m:hover .recall{display:inline-block}
+/* 待确认/失败消息 */
+.pend{display:flex;gap:10px;margin-top:8px;align-items:flex-end;flex-direction:row-reverse}
+.pend .bubble{background:var(--panel);border:1px dashed var(--line);color:var(--muted);opacity:.85}
+.pend .st{font-size:11px;color:var(--muted);text-align:right;margin-top:2px}
+.pend.failed .bubble{border-color:var(--red);color:var(--txt)}
+.pend .retry{margin-right:6px;color:var(--accent);cursor:pointer;text-decoration:underline;font-size:12px}
+.pend .drop{color:var(--muted);cursor:pointer;text-decoration:underline;font-size:12px}
+/* 逐文件上传条 */
+.uplist{padding:0 22px 4px;font-size:12px}
+.uprow{display:flex;align-items:center;gap:8px;color:var(--muted);padding:2px 0}
+.uprow .bar{flex:1;height:4px;border-radius:3px;background:var(--hover);overflow:hidden}
+.uprow .bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .15s}
+.uprow .upx{cursor:pointer;color:var(--muted);border:none;background:none;font-size:13px}
+.uprow .upx:hover{color:var(--red)}
+.uprow.err .bar i{background:var(--red)}
 .file-card{display:flex;gap:10px;align-items:center;background:rgba(255,255,255,.12);border-radius:10px;padding:8px;margin-top:6px;text-decoration:none;color:inherit}
 .row-other .file-card{background:var(--accent-soft);border:1px solid var(--line)}
 .f-ic{font-size:22px}
@@ -181,7 +200,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
     </div>
     <div class="msgs" id="msgs"></div>
     <div class="typing" id="typing"></div>
-    <div id="uploadBar" style="display:none;font-size:12px;color:var(--accent);padding:0 22px 2px"></div>
+    <div class="uplist" id="uplist"></div>
     <div class="composer">
       <div class="pending" id="pending"></div>
       <div class="c-row">
@@ -243,6 +262,9 @@ $('nameInput').addEventListener('change', function(){
 
 var ws=null, selfId=myId, members=[], history=[], typingTimers={};
 var pendingFiles=[]; // {fileId,name,size,mime,relPath,previewUrl}
+/* v1.16.0 会话增强状态 */
+var pendingMsgs=[];   // 已发送未确认 {cmid,kind,text,files,at,status:'sending'|'failed',timer}
+var unread=0;         // 未读数（窗口失焦时累计，聚焦清零）
 
 /* ---------- WS ---------- */
 function wsUrl(){
@@ -258,13 +280,27 @@ function connect(){
     if(m.event==='chat.init'){
       selfId = m.payload.selfId;
       history = m.payload.history || [];
+      // 重连后未确认消息不再等待（避免永久⏳）：转入失败态由用户选择重发/取消
+      pendingMsgs.forEach(function(p){ clearTimeout(p.timer); if(p.status==='sending') p.status='failed'; });
       renderAll();
       return;
     }
     if(m.event==='chat.members'){ members = m.payload||[]; renderMembers(); return; }
     if(m.event==='chat.cleared'){ history=[]; renderAll(); return; }
-    if(m.event==='chat.msg'){ history.push(m.payload); renderMsg(m.payload); scrollBottom(); if(m.payload.sender_id!==selfId) notify(m.payload); return; }
-    if(m.event==='chat.recall'){ history = history.filter(function(x){return x.id!==m.payload.id;}); renderAll(); return; }
+    if(m.event==='chat.msg'){
+      // 本机消息确认：按 clientMsgId 匹配待确认队列 → 标记已送达
+      if(m.payload.clientMsgId && m.payload.sender_id===selfId) confirmPending(m.payload.clientMsgId);
+      history.push(m.payload); renderMsg(m.payload); scrollBottom();
+      if(m.payload.sender_id!==selfId){ notify(m.payload); bumpUnread(); }
+      return;
+    }
+    if(m.event==='chat.recall'){
+      history = history.filter(function(x){return x.id!==m.payload.id;});
+      // 撤回只摘除对应 DOM，避免全量重绘（消息多时卡顿）
+      var el=msgsEl.querySelector('[data-row="'+m.payload.id+'"]');
+      if(el){ el.remove(); } else { renderAll(); }
+      return;
+    }
     if(m.event==='chat.typing'){ showTyping(m.payload); return; }
     if(m.event==='clip.sync'){
       if(m.payload && m.payload.deviceId!==selfId) appendSys('📋 '+(m.payload.deviceName||'某设备')+' 同步了剪贴板');
@@ -341,6 +377,7 @@ function renderAll(){
     renderMsg(r,true);
   });
   renderMembers();
+  renderPendingMsgs();
   scrollBottom(true);
 }
 /* 加载更早消息（分页，服务端 before 游标） */
@@ -423,19 +460,29 @@ window.vidFail=function(el){
 };
 window.showImg=function(src){ $('imgBig').src=src; $('imgModal').style.display='flex'; };
 
+/* 文本气泡：转义后把 URL 变成可点链接（仅 http/https，防 XSS 先转义再包 a 标签） */
+function linkify(s){
+  return s.replace(/(https?:\/\/[^\s<]+)/g, function(u){
+    return '<a href="'+u+'" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline">'+u+'</a>';
+  });
+}
+
 function renderMsg(r,noScroll){
   var mine = r.sender_id===selfId;
   var wrap=document.createElement('div');
   wrap.className='row-m '+(mine?'me':'other');
+  wrap.setAttribute('data-row', r.id);
   var inner='';
   if(r.kind==='text'){
-    inner='<div class="bubble">'+esc(r.text)+'</div>';
+    inner='<div class="bubble">'+linkify(esc(r.text))+'</div>';
   } else if(r.kind==='file'){
     var files=[]; try{ files=JSON.parse(r.file_meta||'[]'); }catch(e){}
     inner='<div class="bubble">'+files.map(fileHtml).join('')+'</div>';
   }
-  wrap.innerHTML='<div class="avatar" style="width:28px;height:28px;font-size:12px;background:'+(mine?'#7c3aed':'#2563eb')+'">'+esc((r.sender_name||'?').slice(0,1).toUpperCase())+'</div>'+
-    '<div style="min-width:0"><div class="m-head">'+esc(r.sender_name)+' · '+fmtTs(r.ts)+'</div>'+inner+'</div>';
+  // 自己的消息悬停可撤回（服务端校验归属权）
+  var recallHtml = mine ? '<span class="recall" data-recall="'+esc(r.id)+'" title="撤回这条消息">撤回</span>' : '';
+  wrap.innerHTML='<div class="avatar" style="width:28px;height:28px;font-size:12px;background:'+(mine?'#7c3aed':'var(--accent)')+'">'+esc((r.sender_name||'?').slice(0,1).toUpperCase())+'</div>'+
+    '<div style="min-width:0"><div class="m-head">'+esc(r.sender_name)+' · '+fmtTs(r.ts)+recallHtml+'</div>'+inner+'</div>';
   msgsEl.appendChild(wrap);
   if(!noScroll) scrollBottom();
 }
@@ -443,22 +490,96 @@ function scrollBottom(force){
   var nearBottom = msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 120;
   if(force||nearBottom) msgsEl.scrollTop = msgsEl.scrollHeight;
 }
+/* ---------- 未读角标 ---------- */
+function bumpUnread(){
+  if(document.hasFocus() && !document.hidden) return;
+  unread++;
+  document.title = '('+unread+') 局域网会话';
+}
+function resetUnread(){
+  unread = 0;
+  document.title = '局域网会话';
+}
+window.addEventListener('focus', resetUnread);
+document.addEventListener('visibilitychange', function(){ if(!document.hidden) resetUnread(); });
+
 function notify(r){
   try{
     if(document.hasFocus()) return;
     if(!Notification || Notification.permission!=='granted') return;
-    new Notification(r.sender_name,{ body: r.kind==='text'? r.text : '[文件] ', tag:r.id });
+    var body = r.kind==='text' ? String(r.text||'').slice(0,80) : '[文件] '+(function(){ try{ return JSON.parse(r.file_meta||'[]').map(function(f){return f.name;}).join('、'); }catch(e){ return ''; } })();
+    var n = new Notification(r.sender_name, { body: body, tag:r.id });
+    n.onclick = function(){ window.focus(); resetUnread(); };
   }catch(e){}
 }
 
-/* ---------- 发送文本 ---------- */
+/* ---------- 发送文本（带状态确认：sending → 已送达 / failed 可重发） ---------- */
+function cmid(){ return 'c'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
 function sendText(){
   var t=inputEl.value.trim();
   if(!t) return;
   inputEl.value=''; inputEl.style.height='auto';
-  send({type:'chat.send', text:t});
+  var id=cmid();
+  var p={cmid:id, kind:'text', text:t, at:Date.now(), status:'sending'};
+  p.timer=setTimeout(function(){ markFailed(id); }, 10000);
+  pendingMsgs.push(p);
+  renderPendingMsgs(); scrollBottom();
+  send({type:'chat.send', text:t, clientMsgId:id});
   sendTyping(false);
 }
+function confirmPending(cmid){
+  for(var i=0;i<pendingMsgs.length;i++){
+    if(pendingMsgs[i].cmid===cmid){ clearTimeout(pendingMsgs[i].timer); pendingMsgs.splice(i,1); renderPendingMsgs(); return; }
+  }
+}
+function markFailed(cmid){
+  for(var i=0;i<pendingMsgs.length;i++){
+    if(pendingMsgs[i].cmid===cmid && pendingMsgs[i].status==='sending'){ pendingMsgs[i].status='failed'; renderPendingMsgs(); return; }
+  }
+}
+function resendPending(cmid){
+  for(var i=0;i<pendingMsgs.length;i++){
+    var p=pendingMsgs[i];
+    if(p.cmid===cmid){
+      p.status='sending';
+      clearTimeout(p.timer);
+      p.timer=setTimeout(function(){ markFailed(cmid); }, 10000);
+      renderPendingMsgs();
+      if(p.kind==='text') send({type:'chat.send', text:p.text, clientMsgId:cmid});
+      else if(p.kind==='file') send({type:'chat.file', files:p.files, clientMsgId:cmid});
+      return;
+    }
+  }
+}
+function dropPending(cmid){
+  for(var i=0;i<pendingMsgs.length;i++){
+    if(pendingMsgs[i].cmid===cmid){ clearTimeout(pendingMsgs[i].timer); pendingMsgs.splice(i,1); renderPendingMsgs(); return; }
+  }
+}
+/* 待确认/失败消息渲染在历史消息之后 */
+function renderPendingMsgs(){
+  document.querySelectorAll('.pend').forEach(function(el){ el.remove(); });
+  pendingMsgs.forEach(function(p){
+    var wrap=document.createElement('div');
+    wrap.className='pend'+(p.status==='failed'?' failed':'');
+    var st = p.status==='sending' ? '⏳ 发送中…'
+      : '<span class="retry" data-resend="'+p.cmid+'">重发</span><span class="drop" data-drop="'+p.cmid+'">取消</span> ⚠️ 发送失败';
+    var bubble = p.kind==='text' ? esc(p.text) : '📎 '+(p.files||[]).length+' 个文件';
+    wrap.innerHTML='<div style="min-width:0"><div class="bubble">'+bubble+'</div><div class="st">'+st+'</div></div>';
+    msgsEl.appendChild(wrap);
+  });
+  if(pendingMsgs.length) scrollBottom();
+}
+// 撤回 / 重发 / 取消 事件委托
+msgsEl.addEventListener('click', function(e){
+  var t=e.target;
+  if(t.dataset && t.dataset.recall){
+    var id=t.dataset.recall;
+    if(confirm('撤回这条消息？')) send({type:'chat.recall', id:id});
+    t.style.display='none';
+  } else if(t.dataset && t.dataset.resend){ resendPending(t.dataset.resend); }
+  else if(t.dataset && t.dataset.drop){ dropPending(t.dataset.drop); }
+});
 $('btnSend').onclick=sendText;
 inputEl.addEventListener('keydown',function(e){
   if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendText(); }
@@ -484,9 +605,10 @@ function showTyping(p){
   typingTimers[p.id]=setTimeout(function(){ $('typing').textContent=''; },3500);
 }
 
-/* ---------- 文件 / 文件夹 ---------- */
+/* ---------- 文件 / 文件夹（逐文件上传：独立进度条、可取消、传完即发） ---------- */
+var uploadQueue=[]; // {name,pct,xhr,status}
 function addPending(file, relPath){
-  // 小图片立即生成预览
+  // 保留选片缓冲（预览用）；实际发送在 uploadAndSend
   pendingFiles.push({file:file, name:file.name, size:file.size, mime:file.type, relPath:relPath||''});
   renderPending();
 }
@@ -498,41 +620,62 @@ function renderPending(){
     el.onclick=function(){ pendingFiles.splice(Number(el.dataset.i),1); renderPending(); };
   });
 }
+function renderUploads(){
+  var el=$('uplist');
+  el.innerHTML = uploadQueue.map(function(u,i){
+    var bar = u.status==='err' ? '<i style="width:100%"></i>' : '<i style="width:'+(u.pct||0)+'%"></i>';
+    var st = u.status==='err' ? '失败' : u.pct+'%';
+    return '<div class="uprow'+(u.status==='err'?' err':'')+'"><span style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(u.name)+'</span>'+
+      '<span class="bar">'+bar+'</span><span style="min-width:36px;text-align:right">'+st+'</span>'+
+      (u.status==='uploading' ? '<button class="upx" data-upx="'+i+'" title="取消上传">✕</button>' : '<button class="upx" data-uprm="'+i+'" title="移除">✕</button>')+'</div>';
+  }).join('');
+  el.querySelectorAll('[data-upx]').forEach(function(b){
+    b.onclick=function(){ var u=uploadQueue[Number(b.dataset.upx)]; if(u&&u.xhr){ try{u.xhr.abort();}catch(e){} } };
+  });
+  el.querySelectorAll('[data-uprm]').forEach(function(b){
+    b.onclick=function(){ uploadQueue.splice(Number(b.dataset.uprm),1); renderUploads(); };
+  });
+}
+/* 上传单个文件：成功后立即以单文件消息发出（渐进送达，不必整批等完） */
+function uploadOne(item, relPath){
+  return new Promise(function(resolve){
+    var entry={name:item.name||'file', pct:0, xhr:null, status:'uploading'};
+    uploadQueue.push(entry); renderUploads();
+    var fd=new FormData();
+    fd.append('file', item, relPath || item.name || 'file');
+    var xhr=new XMLHttpRequest();
+    entry.xhr=xhr;
+    xhr.open('POST','/api/chat/upload');
+    xhr.upload.onprogress=function(e){ if(e.lengthComputable){ entry.pct=Math.round((e.loaded/e.total)*100); renderUploads(); } };
+    xhr.onload=function(){
+      if(entry.status!=='uploading') return resolve(false); // 已取消
+      var j=null; try{ j=JSON.parse(xhr.responseText); }catch(e){}
+      if(j && j.ok){
+        entry.pct=100; entry.status='done'; renderUploads();
+        var f=j.files && j.files[0];
+        if(f){
+          var id=cmid();
+          var p={cmid:id, kind:'file', files:[{fileId:f.fileId,name:f.name,size:f.size,mime:f.mime,relPath:relPath||''}], at:Date.now(), status:'sending'};
+          p.timer=setTimeout(function(){ markFailed(id); }, 10000);
+          pendingMsgs.push(p);
+          renderPendingMsgs();
+          send({type:'chat.file', files:[{fileId:f.fileId,name:f.name,size:f.size,mime:f.mime,relPath:relPath||''}], clientMsgId:id});
+        }
+        resolve(true);
+      } else { entry.status='err'; renderUploads(); resolve(false); }
+    };
+    xhr.onerror=function(){ if(entry.status!=='uploading') return resolve(false); entry.status='err'; renderUploads(); resolve(false); };
+    xhr.onabort=function(){ entry.status='err'; renderUploads(); resolve(false); };
+    xhr.send(fd);
+  });
+}
 async function uploadAndSend(list, withRel){
   if(!list.length) return;
-  var fd=new FormData();
   for(var i=0;i<list.length;i++){
     var item=list[i];
-    fd.append('file', item, withRel? (item.webkitRelativePath||item.name) : item.name);
+    var rel = withRel ? (item.webkitRelativePath||item.name||'') : '';
+    await uploadOne(item, rel);
   }
-  $('btnSend').disabled=true;
-  var bar=$('uploadBar');
-  bar.style.display='block'; bar.textContent='正在发送 '+list.length+' 个文件… 0%';
-  try{
-    var j=await new Promise(function(resolve,reject){
-      var xhr=new XMLHttpRequest();
-      xhr.open('POST','/api/chat/upload');
-      xhr.upload.onprogress=function(e){
-        if(e.lengthComputable){
-          var pct=Math.round((e.loaded/e.total)*100);
-          bar.textContent='正在发送 '+list.length+' 个文件… '+pct+'%';
-        }
-      };
-      xhr.onload=function(){ try{ resolve(JSON.parse(xhr.responseText)); }catch(err){ reject(new Error('bad_response')); } };
-      xhr.onerror=function(){ reject(new Error('network_error')); };
-      xhr.send(fd);
-    });
-    if(j.ok){
-      bar.textContent='发送完成 ✓';
-      setTimeout(function(){ bar.style.display='none'; },900);
-      var files=j.files.map(function(f,i2){
-        return { fileId:f.fileId, name:f.name, size:f.size, mime:f.mime,
-                 relPath: withRel ? (list[i2].webkitRelativePath||'') : '' };
-      });
-      send({type:'chat.file', files:files});
-    } else { bar.style.display='none'; alert('上传失败：'+(j.error||'')); }
-  }catch(e){ bar.style.display='none'; alert('上传失败：'+e.message); }
-  $('btnSend').disabled=false;
 }
 $('btnFile').onclick=function(){
   var inp=document.createElement('input'); inp.type='file'; inp.multiple=true;

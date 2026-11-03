@@ -29,6 +29,24 @@ class ChatManager {
     try {
       fs.mkdirSync(this.filesDir, { recursive: true });
     } catch (e) {}
+    // 设备身份记忆（v1.16.0）：deviceId -> {id,name}；窗口清了缓存也能认领回历史身份，
+    // 避免「清一次浏览器缓存就变成一个新人」。持久化在 db config。
+    try {
+      this.identities = JSON.parse(ctx.db.getConfig('chat_identities') || '{}') || {};
+    } catch (e) {
+      this.identities = {};
+    }
+  }
+
+  _saveIdentities() {
+    try {
+      // 上限保护：最多记 200 台设备
+      const keys = Object.keys(this.identities);
+      if (keys.length > 200) {
+        for (const k of keys.slice(0, keys.length - 200)) delete this.identities[k];
+      }
+      this.ctx.db.setConfig('chat_identities', JSON.stringify(this.identities));
+    } catch (e) {}
   }
 
   register() {
@@ -194,17 +212,36 @@ class ChatManager {
   /** 处理会话相关 WS 消息；返回 true 表示已处理 */
   onMessage(ws, msg) {
     switch (msg.type) {
-      case 'chat.hello':
+      case 'chat.hello': {
+        // 身份解析（v1.16.0）：优先用客户端上报的 clientId 并记住映射；
+        // 清缓存的窗口（无 clientId）按 deviceId 认领历史身份与名称
+        const devKey = msg.deviceId ? String(msg.deviceId).slice(0, 80) : null;
+        let clientId = String(msg.clientId || '').slice(0, 64);
+        let name = String(msg.name || '').slice(0, 40);
+        if (devKey) {
+          const memo = this.identities[devKey] || null;
+          if (clientId) {
+            if (!memo || memo.id !== clientId || (name && memo.name !== name)) {
+              this.identities[devKey] = { id: clientId, name: name || (memo && memo.name) || '' };
+              this._saveIdentities();
+            }
+            if (!name && memo && memo.name) name = memo.name;
+          } else if (memo && memo.id) {
+            clientId = memo.id;
+            if (!name && memo.name) name = memo.name;
+          }
+        }
         this.members.set(ws, {
-          id: String(msg.clientId || shortId()),
-          name: String(msg.name || '未知设备').slice(0, 40),
+          id: clientId || shortId(),
+          name: name || '未知设备',
           kind: msg.kind === 'desktop' ? 'desktop' : 'web',
-          deviceId: msg.deviceId ? String(msg.deviceId) : null,
+          deviceId: devKey,
           ts: Date.now(),
         });
         ws.send(JSON.stringify({ event: 'chat.init', payload: { selfId: this.members.get(ws).id, history: this.ctx.db.listChatMessages(200) } }));
         this._broadcastMembers();
         return true;
+      }
 
       case 'chat.send': {
         const m = this.members.get(ws);
@@ -218,6 +255,7 @@ class ChatManager {
           kind: 'text',
           text,
         };
+        if (msg.clientMsgId) record.clientMsgId = String(msg.clientMsgId).slice(0, 64); // 发送方确认消息状态用（不落库）
         this._persist(record);
         this._broadcast('chat.msg', record);
         return true;
@@ -242,6 +280,7 @@ class ChatManager {
           kind: 'file',
           files,
         };
+        if (msg.clientMsgId) record.clientMsgId = String(msg.clientMsgId).slice(0, 64); // 发送方确认消息状态用（不落库）
         this._persist(record);
         this._broadcast('chat.msg', record);
         this.ctx.logEvent({ event_type: 'chat_file', device_name: m.name, ip: ws._socketIp || '', result: 'success', detail: { count: files.length } });
