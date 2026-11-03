@@ -20,6 +20,8 @@ class DeviceManager extends EventEmitter {
       device_id: info.deviceId || info.device_id,
       device_name: info.deviceName || info.device_name,
       os: info.os || 'Unknown',
+      device_type: info.deviceType || (existing ? existing.device_type : ''),
+      alias: info.alias != null ? info.alias : (existing ? existing.alias : ''),
       host: info.host || info.ip,
       port: info.port,
       version: info.version || '0.0.0',

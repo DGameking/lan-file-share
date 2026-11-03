@@ -358,6 +358,15 @@
         if (!s) return 'LF-????-????';
         return ('LF-' + s.slice(0, 4) + '-' + s.slice(4, 8)).toUpperCase();
       }
+      const typeIcon = (d) => {
+        const t = String(d.device_type || '').toLowerCase();
+        if (d.os === 'android' || t === 'phone') return '📱';
+        if (t === 'laptop' || d.os === 'darwin') return '💻';
+        if (t === 'nas' || d.os === 'linux') return '🖥️';
+        if (d.os === 'win32') return '🖥️';
+        return '🔌';
+      };
+
       const sortedDevices = computed(() => {
         return [...store.devices].sort((a, b) => {
           if (a.is_online !== b.is_online) return a.is_online ? -1 : 1; // 在线优先
@@ -396,7 +405,7 @@
       }
 
       return { store, host, port, inviteCode, myInvite, ping, trust, blacklist, connect, discover, createInvite, joinInvite, copy,
-               fpFmt, sortedDevices, onlineCount, copyFp };
+               fpFmt, sortedDevices, onlineCount, copyFp, typeIcon };
     },
     template: `
       <div>
@@ -453,10 +462,10 @@
           <div v-else class="device-grid">
             <div class="dev-card" v-for="d in sortedDevices" :key="d.device_id" :class="{ off: !d.is_online }">
               <div class="dc-head">
-                <div class="dc-avatar" :style="d.is_online ? '' : 'filter:grayscale(1);opacity:.45'">{{ (d.device_name || '?').slice(0,1).toUpperCase() }}</div>
+                <div class="dc-avatar" :style="d.is_online ? '' : 'filter:grayscale(1);opacity:.45'">{{ (d.alias || d.device_name || '?').slice(0,1).toUpperCase() }}</div>
                 <div class="dc-info">
-                  <div class="dc-name">{{ d.device_name }} <span class="dot" :class="d.is_online ? 'on' : 'off2'"></span></div>
-                  <div class="dc-os">{{ d.os || '-' }} · <span class="mono">{{ fpFmt(d.fingerprint) }}</span></div>
+                  <div class="dc-name">{{ d.alias || d.device_name }}<span v-if="d.alias" class="muted" style="font-size:11px">（{{ d.device_name }}）</span> <span class="dot" :class="d.is_online ? 'on' : 'off2'"></span></div>
+                  <div class="dc-os">{{ typeIcon(d) }} {{ d.os || '-' }} · <span class="mono">{{ fpFmt(d.fingerprint) }}</span></div>
                   <div class="dc-os muted">{{ d.host }}:{{ d.port }}</div>
                 </div>
               </div>
@@ -635,6 +644,8 @@
             <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.autoAcceptDrop" @change="onCheck($event,'autoAcceptDrop')" /> 自动接收其他设备的投送文件</label>
             <label class="field">接收配额（GB，超出按最旧文件自动清理）<input type="number" min="0.5" step="0.5" style="width:100px" :value="store.settings.dropQuotaGB" @change="onText($event,'dropQuotaGB')" /></label>
             <label class="field">投送 PIN（对方投送给本机时需提供；本机投送给对方时自动携带）<input type="text" :value="store.settings.dropPin" @change="onText($event,'dropPin')" style="width:160px" placeholder="留空不启用" /></label>
+            <label class="field">设备别名（对端看到的友好名称，留空用主机名）<input type="text" :value="store.settings.deviceAlias" @change="onText($event,'deviceAlias')" style="width:180px" placeholder="例：书房台式机" /></label>
+            <label class="field">设备类型<select :value="store.settings.deviceType" @change="onText($event,'deviceType')" style="width:130px"><option value="">自动（按系统推断）</option><option value="pc">台式机</option><option value="laptop">笔记本</option><option value="phone">手机/平板</option><option value="nas">NAS/服务器</option></select></label>
             <label class="field">跨网段会合点（中心端 IP:端口，逗号分隔；填光猫层 NAS 地址即可打通双路由器不同网段）<input type="text" :value="store.settings.rendezvous" @change="onText($event,'rendezvous')" placeholder="例：192.168.10.5:8080" /></label>
           </div>
           <div class="muted" style="margin-top:6px" v-if="rzStatus && rzStatus.enabled">

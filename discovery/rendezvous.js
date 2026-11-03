@@ -78,6 +78,8 @@ class RendezvousClient {
         const r = await this.request(hub, 'POST', '/api/hub/register', {
           deviceId: engine.deviceId, deviceName: engine.deviceName,
           port: engine.httpPort || engine.port || 8080, os: process.platform, version: engine.version || '',
+          deviceType: (engine.settings && engine.settings.deviceType) || (process.platform === 'android' ? 'phone' : process.platform === 'darwin' ? 'laptop' : 'pc'),
+          alias: String((engine.settings && engine.settings.deviceAlias) || '').slice(0, 40),
         });
         if (r.status !== 200) { lastErr = `${hub}: HTTP ${r.status}`; continue; }
         j = JSON.parse(r.body.toString());
@@ -91,6 +93,7 @@ class RendezvousClient {
         const dev = engine.deviceManager.upsert({
           deviceId: p.deviceId, deviceName: p.deviceName, os: p.os,
           host: p.ip, port: p.port, version: p.version,
+          deviceType: p.deviceType || '', alias: p.alias || '',
           relay: true, relayHub: hub,
         });
       }

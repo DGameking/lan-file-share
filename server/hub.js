@@ -73,6 +73,7 @@ function register(engine) {
     peers.set(b.deviceId, {
       deviceId: String(b.deviceId), deviceName: String(b.deviceName || '未知设备').slice(0, 60),
       os: String(b.os || '').slice(0, 30), version: String(b.version || '').slice(0, 20),
+      deviceType: String(b.deviceType || '').slice(0, 20), alias: String(b.alias || '').slice(0, 40),
       port: Number(b.port) || 8080, ip: engine.clientIp(req), ts: now,
     });
     const peerList = [...peers.values()].filter((p) => p.deviceId !== b.deviceId && now - p.ts <= PEER_TTL);

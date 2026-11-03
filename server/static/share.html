@@ -188,11 +188,60 @@
         window.location.href = `/s/${SHARE_ID}/api/zip?paths=${sel.map(encodeURIComponent).join(',')}${pwd?'&pwd='+encodeURIComponent(pwd):''}`;
       };
 
-      const doUpload = (files) => {
-        const fd = new FormData();
-        for (const f of files) fd.append(f.name, f);
-        fetch(`/s/${SHARE_ID}/api/upload?path=${encodeURIComponent(curPath)}${pwd?'&pwd='+encodeURIComponent(pwd):''}`, { method:'POST', body: fd })
-          .then(r=>r.json()).then(d=>{ toast(d.ok?'上传成功':'上传失败'); load(); }).catch(()=>toast('上传失败'));
+      const CHUNK_SIZE = 8 * 1024 * 1024, CHUNK_THRESHOLD = 16 * 1024 * 1024;
+      async function sha256Hex(blob){
+        if (!(window.crypto && crypto.subtle)) return '';
+        const buf = await blob.arrayBuffer();
+        const h = await crypto.subtle.digest('SHA-256', buf);
+        return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('');
+      }
+      async function uploadChunked(f){
+        const total = Math.ceil(f.size / CHUNK_SIZE);
+        const uid = 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+        const q = (extra) => `/s/${SHARE_ID}/api/upload/chunk?uploadId=${uid}${extra||''}${pwd?'&pwd='+encodeURIComponent(pwd):''}`;
+        // 续传：查询已收分块
+        let have = new Set();
+        try {
+          const st = await fetch(`/s/${SHARE_ID}/api/upload/chunk/status?uploadId=${uid}${pwd?'&pwd='+encodeURIComponent(pwd):''}`);
+          if (st.ok) { const j = await st.json(); have = new Set(j.have || []); }
+        } catch (e) {}
+        for (let i = 0; i < total; i++) {
+          if (have.has(i)) continue;
+          let ok = false, lastErr = null;
+          for (let retry = 0; retry < 3 && !ok; retry++) {
+            try {
+              const blob = f.slice(i * CHUNK_SIZE, Math.min(i * CHUNK_SIZE + CHUNK_SIZE, f.size));
+              const sha = await sha256Hex(blob);
+              const r = await fetch(q(`&index=${i}${sha?`&sha256=${sha}`:''}`), { method: 'POST', body: blob });
+              if (r.ok) ok = true;
+              else if (r.status === 422) { /* 坏块：删除后重试 */ lastErr = new Error('checksum'); }
+              else lastErr = new Error('HTTP ' + r.status);
+            } catch (e) { lastErr = e; }
+            if (!ok) await new Promise((res)=>setTimeout(res, 800 * (retry + 1)));
+          }
+          if (!ok) throw lastErr || new Error('chunk_failed');
+        }
+        const fin = await fetch(`/s/${SHARE_ID}/api/upload/finish?uploadId=${uid}&name=${encodeURIComponent(f.name)}&path=${encodeURIComponent(curPath)}&total=${total}${f.lastModified?`&mtime=${f.lastModified}`:''}${pwd?'&pwd='+encodeURIComponent(pwd):''}`, { method: 'POST' });
+        if (!fin.ok) throw new Error('finish_failed');
+      }
+      const doUpload = async (files) => {
+        let ok = 0, fail = 0;
+        toast(`开始上传 ${files.length} 个文件…`);
+        for (const f of files) {
+          try {
+            if (f.size > CHUNK_THRESHOLD) await uploadChunked(f);
+            else {
+              const fd = new FormData();
+              fd.append(f.name, f);
+              const r = await fetch(`/s/${SHARE_ID}/api/upload?path=${encodeURIComponent(curPath)}${pwd?'&pwd='+encodeURIComponent(pwd):''}`, { method:'POST', body: fd });
+              const d = await r.json();
+              if (!d.ok) throw new Error('failed');
+            }
+            ok++;
+          } catch (e) { fail++; }
+        }
+        toast(ok && !fail ? '上传成功' : (ok ? `成功 ${ok} 个，失败 ${fail} 个` : '上传失败'));
+        load();
       };
       $('#uploadBtn').onclick = () => $('#fileInput').click();
       $('#fileInput').onchange = (e) => doUpload(e.target.files);

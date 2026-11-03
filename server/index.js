@@ -138,6 +138,8 @@ class LanFileShare extends require('events').EventEmitter {
       JSON.parse(this.db.getConfig('settings') || 'null') ||
       {
         deviceName: this.deviceName,
+        deviceAlias: '',
+        deviceType: '',
         theme: 'system',
         language: 'zh',
         httpPort: this.httpPort,
@@ -344,6 +346,8 @@ class LanFileShare extends require('events').EventEmitter {
       host: this.localIp,
       port: this.httpPort,
       os: this.osType,
+      deviceType: this.settings.deviceType || (this.osType === 'android' ? 'phone' : this.osType === 'darwin' ? 'laptop' : 'pc'),
+      alias: String(this.settings.deviceAlias || '').trim().slice(0, 40),
       version: this.version,
       fingerprint: this.fingerprint,
       sharedCount: this.enabledShareCount(),
@@ -359,6 +363,14 @@ class LanFileShare extends require('events').EventEmitter {
           this.udpPort = this.udp.port;
           this.udp.startHeartbeat();
           this.logger.info('discovery', `UDP 发现已启动`, { port: this.udpPort });
+          // 自动降级：启动 45s 后仍无任何在线设备（AP 隔离/广播丢包）→ 逐 IP 深度扫描
+          setTimeout(() => {
+            const online = this.deviceManager.list().filter((d) => d.is_online).length;
+            if (online === 0 && this.settings.udp !== false) {
+              this.logger.info('discovery', 'UDP 发现无结果，自动降级为逐 IP 深度扫描');
+              this.deepScan().catch(() => {});
+            }
+          }, 45000);
         })
         .catch((e) => {
           this.logger.error('discovery', 'UDP 发现启动失败', e.message);
@@ -571,6 +583,8 @@ class LanFileShare extends require('events').EventEmitter {
   /* ---------------- 设备操作 ---------------- */
   discover() {
     if (this.udp) this.udp.probe();
+    // 同步发现按钮同时触发逐 IP 深度扫描（后台执行，命中即注入）
+    this.deepScan().catch(() => {});
   }
 
   async connectManual({ host, port }) {
@@ -831,10 +845,53 @@ class LanFileShare extends require('events').EventEmitter {
       host: this.localIp,
       port: this.httpPort,
       os: this.osType,
+      deviceType: this.settings.deviceType || (this.osType === 'android' ? 'phone' : this.osType === 'darwin' ? 'laptop' : 'pc'),
+      alias: String(this.settings.deviceAlias || '').trim().slice(0, 40),
       version: this.version,
       fingerprint: this.fingerprint,
       sharedCount: this.enabledShareCount(),
     };
+  }
+
+  /**
+   * 逐 IP 降级扫描：组播/广播失败（AP 隔离/跨交换机）时的兜底发现。
+   * 探测同子网各地址的 /api/self，命中即注入设备表。
+   */
+  async deepScan() {
+    if (this._scanning) return { ok: false, reason: 'scanning' };
+    this._scanning = true;
+    const t0 = Date.now();
+    try {
+      const ipScan = require('../discovery/ip-scan');
+      const ports = [...new Set([this.httpPort, 8080].filter(Boolean))];
+      const hits = await ipScan.scan({
+        ips: ipScan.localPrivateIps(),
+        ports,
+        onHit: (info) => {
+          if (info.deviceId === this.deviceId) return;
+          this.logger.info('discovery', `逐 IP 扫描发现设备`, { name: info.deviceName, host: info.host, port: info.port });
+          this._onPeer({
+            deviceId: info.deviceId,
+            deviceName: info.deviceName,
+            host: info.host,
+            port: info.port,
+            os: info.os,
+            deviceType: info.deviceType,
+            alias: info.alias,
+            version: info.version,
+            fingerprint: info.fingerprint,
+            sharedCount: info.sharedCount,
+          });
+        },
+      });
+      this.logger.info('discovery', `逐 IP 扫描完成`, { hits: hits.length, ms: Date.now() - t0 });
+      return { ok: true, hits: hits.length, ms: Date.now() - t0 };
+    } catch (e) {
+      this.logger.error('discovery', '逐 IP 扫描失败', e.message);
+      return { ok: false, reason: e.message };
+    } finally {
+      this._scanning = false;
+    }
   }
 
   stats() {

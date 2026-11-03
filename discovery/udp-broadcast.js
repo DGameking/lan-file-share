@@ -73,6 +73,8 @@ class UdpDiscovery extends EventEmitter {
       host: rinfo.address,
       port: data.port || this.port,
       os: data.os,
+      deviceType: data.deviceType || '',
+      alias: data.alias || '',
       version: data.version,
       fingerprint: data.fingerprint,
       sharedCount: data.sharedCount,

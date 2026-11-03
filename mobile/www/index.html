@@ -26,7 +26,18 @@ button:active{opacity:.85}
 </style>
 </head>
 <body>
-<div class="card">
+<div class="card" id="shareCard" style="display:none">
+  <div class="logo">📤</div>
+  <h1>分享投送</h1>
+  <div class="sub" id="shareDesc">检测到来自其他应用的分享内容</div>
+  <div class="err" id="shareErr"></div>
+  <label>投送到</label>
+  <input id="shareUrl" placeholder="例如 http://192.168.1.20:8080" autocapitalize="off" autocorrect="off" spellcheck="false" />
+  <div class="hint" id="shareHint"></div>
+  <button id="shareGo">投 送</button>
+  <div class="tip" id="shareResult" style="display:none"></div>
+</div>
+<div class="card" id="connectCard">
   <div class="logo">📡</div>
   <h1>局域网共享</h1>
   <div class="sub">连接同一局域网内运行「局域网文件共享」的电脑或 NAS</div>
@@ -90,6 +101,94 @@ button:active{opacity:.85}
 
   document.getElementById('go').addEventListener('click', connect);
   input.addEventListener('keydown', function(e){ if (e.key === 'Enter') connect(); });
+
+  /* ---------- 系统分享投送（Capacitor 原生桥） ---------- */
+  var pending = null; // {text, files[]}
+  function fileUrl(p){
+    // Capacitor webview 本地文件访问（https://localhost/_capacitor_file_/...）
+    return window.Capacitor && window.Capacitor.convertFileSrc
+      ? window.Capacitor.convertFileSrc(p) : p;
+  }
+  function fmtSize(n){
+    if (n > 1073741824) return (n/1073741824).toFixed(1)+'GB';
+    if (n > 1048576) return (n/1048576).toFixed(1)+'MB';
+    if (n > 1024) return (n/1024).toFixed(0)+'KB';
+    return n+'B';
+  }
+  function initShare(){
+    if (!window.Capacitor || !window.Capacitor.Plugins || !window.Capacitor.Plugins.ShareIntent) return;
+    var P = window.Capacitor.Plugins.ShareIntent;
+    P.getPending().then(function(r){
+      if (!r || !r.has) return;
+      pending = { text: r.text || '', files: r.files || [] };
+      if (!pending.text && !pending.files.length) return;
+      document.getElementById('connectCard').style.display = 'none';
+      document.getElementById('shareCard').style.display = '';
+      var saved = localStorage.getItem('server_url') || '';
+      document.getElementById('shareUrl').value = saved;
+      var parts = [];
+      if (pending.text) parts.push('文本（' + pending.text.length + ' 字）');
+      for (var i = 0; i < pending.files.length; i++) parts.push(pending.files[i].split('/').pop());
+      document.getElementById('shareDesc').textContent = '待投送：' + parts.join('、');
+    }).catch(function(){});
+  }
+  function uploadShare(){
+    var err = document.getElementById('shareErr');
+    var btn = document.getElementById('shareGo');
+    var res = document.getElementById('shareResult');
+    err.textContent = '';
+    res.style.display = 'none';
+    var v = (document.getElementById('shareUrl').value || '').trim().replace(/\/+$/, '');
+    if (!v) { err.textContent = '请输入服务器地址'; return; }
+    if (!/^https?:\/\//i.test(v)) v = 'http://' + v;
+    localStorage.setItem('server_url', v);
+    btn.textContent = '连接服务器…';
+    btn.disabled = true;
+    fetch(v + '/api/self').then(function(r){ if (!r.ok) throw new Error('bad'); return r.json(); }).then(function(info){
+      if (!info || !info.deviceId) throw new Error('bad');
+      btn.textContent = '投送中…';
+      var from = 'Android';
+      var chain = Promise.resolve();
+      var ok = 0, fail = 0;
+      pending.files.forEach(function(p){
+        chain = chain.then(function(){
+          var name = p.split('/').pop();
+          return fetch(fileUrl(p)).then(function(fr){ return fr.blob(); }).then(function(blob){
+            var fd = new FormData();
+            fd.append('file', blob, name);
+            return fetch(v + '/api/drop?from=' + encodeURIComponent(from), { method: 'POST', body: fd });
+          }).then(function(up){ if (up.ok) ok++; else fail++; });
+        }).catch(function(){ fail++; });
+      });
+      if (pending.text) {
+        chain = chain.then(function(){
+          return fetch(v + '/api/drop?from=' + encodeURIComponent(from), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: pending.text, from: from })
+          }).then(function(up){ if (up.ok) ok++; else fail++; }).catch(function(){ fail++; });
+        });
+      }
+      chain.then(function(){
+        btn.textContent = '投 送';
+        btn.disabled = false;
+        localStorage.setItem('server_name', info.deviceName || '');
+        res.style.display = '';
+        res.innerHTML = (fail ? ('⚠️ 成功 ' + ok + ' 个，失败 ' + fail + ' 个<br>（大文件失败可到电脑端开启后再试）')
+                              : ('✅ 已投送 ' + ok + ' 项到「' + (info.deviceName || '服务器') + '」')) +
+                        '<br><span style="color:var(--muted)">本窗口可以关闭了</span>';
+        // 清理缓存文件（下次分享会重新写入）
+        if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem) { /* 预留 */ }
+      });
+    }).catch(function(){
+      btn.textContent = '投 送';
+      btn.disabled = false;
+      err.textContent = '无法连接服务器，请检查地址与网络';
+      document.getElementById('shareHint').style.display = 'block';
+    });
+  }
+  document.getElementById('shareGo').addEventListener('click', uploadShare);
+  document.getElementById('shareUrl').addEventListener('keydown', function(e){ if (e.key === 'Enter') uploadShare(); });
+  initShare();
 })();
 </script>
 </body>
