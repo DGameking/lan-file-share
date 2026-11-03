@@ -73,10 +73,21 @@ class ChatManager {
       res.json({ ok: true });
     });
 
-    // 聊天历史
+    // 会话历史
     app.get('/api/chat/history', (req, res) => {
       const before = req.query.before ? Number(req.query.before) : null;
       res.json(this.ctx.db.listChatMessages(200, before));
+    });
+
+    // 会话消息搜索（v1.17.0）：文本内容 + 文件名，最多返回 50 条
+    app.get('/api/chat/search', (req, res) => {
+      const q = String(req.query.q || '').slice(0, 100);
+      if (!q.trim()) return res.json([]);
+      try {
+        res.json(this.ctx.db.searchChatMessages(q, 50));
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
     });
 
     // 当前成员列表（本机 + 桥接远端聚合）
@@ -199,6 +210,20 @@ class ChatManager {
     });
   }
 
+  /** 引用回复清洗（v1.17.0）：只保留定位所需的 id/name/preview，长度截断防滥用 */
+  _sanitizeReply(reply) {
+    if (!reply || typeof reply !== 'object') return null;
+    const id = String(reply.id || '').slice(0, 64);
+    if (!id) return null;
+    return {
+      id,
+      name: String(reply.name || '').slice(0, 40),
+      preview: String(reply.preview || '').slice(0, 120),
+      kind: reply.kind === 'file' ? 'file' : 'text',
+      ts: Number(reply.ts) || 0,
+    };
+  }
+
   /** 新 WS 连接进入会话（自动加入，无需手动操作） */
   attach(ws) {
     ws.on('close', () => {
@@ -256,6 +281,8 @@ class ChatManager {
           text,
         };
         if (msg.clientMsgId) record.clientMsgId = String(msg.clientMsgId).slice(0, 64); // 发送方确认消息状态用（不落库）
+        const reply = this._sanitizeReply(msg.reply);
+        if (reply) record.reply = reply;
         this._persist(record);
         this._broadcast('chat.msg', record);
         return true;
@@ -281,6 +308,8 @@ class ChatManager {
           files,
         };
         if (msg.clientMsgId) record.clientMsgId = String(msg.clientMsgId).slice(0, 64); // 发送方确认消息状态用（不落库）
+        const reply2 = this._sanitizeReply(msg.reply);
+        if (reply2) record.reply = reply2;
         this._persist(record);
         this._broadcast('chat.msg', record);
         this.ctx.logEvent({ event_type: 'chat_file', device_name: m.name, ip: ws._socketIp || '', result: 'success', detail: { count: files.length } });
@@ -332,6 +361,7 @@ class ChatManager {
         kind: record.kind,
         text: record.text || null,
         file_meta: record.files ? JSON.stringify(record.files) : null,
+        reply_meta: record.reply ? JSON.stringify(record.reply) : null,
       });
       this.ctx.db.pruneChatMessages(MAX_CHAT_MESSAGES);
     } catch (e) {}

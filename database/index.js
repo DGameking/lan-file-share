@@ -36,6 +36,17 @@ class DB {
   _initSchema() {
     const sql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
     this.db.exec(sql);
+    this._migrate();
+  }
+
+  /** 轻量迁移：为旧库补齐后加的列（CREATE TABLE IF NOT EXISTS 不会更新已存在的表） */
+  _migrate() {
+    const cols = (table) => this._query(`PRAGMA table_info(${table})`).map((r) => r.name);
+    try {
+      if (!cols('chat_messages').includes('reply_meta')) {
+        this.db.run('ALTER TABLE chat_messages ADD COLUMN reply_meta TEXT');
+      }
+    } catch (e) {}
   }
 
   _persist() {
@@ -218,10 +229,22 @@ class DB {
   /* ---------------- 会话聊天 ---------------- */
   addChatMessage(m) {
     this._run(
-      'INSERT INTO chat_messages (id,ts,sender_id,sender_name,kind,text,file_meta) VALUES (?,?,?,?,?,?,?) ' +
+      'INSERT INTO chat_messages (id,ts,sender_id,sender_name,kind,text,file_meta,reply_meta) VALUES (?,?,?,?,?,?,?,?) ' +
         'ON CONFLICT(id) DO NOTHING',
-      [m.id, m.ts, m.sender_id, m.sender_name, m.kind || 'text', m.text || null, m.file_meta || null]
+      [m.id, m.ts, m.sender_id, m.sender_name, m.kind || 'text', m.text || null, m.file_meta || null, m.reply_meta || null]
     );
+  }
+  /** 会话消息搜索（v1.17.0）：文本内容 + 文件名；按时间倒序取最新 limit 条后正序返回 */
+  searchChatMessages(q, limit = 50) {
+    const kw = String(q || '').trim();
+    if (!kw) return [];
+    const esc = kw.replace(/[\\%_]/g, (c) => '\\' + c);
+    const like = `%${esc}%`;
+    return this._query(
+      "SELECT * FROM chat_messages WHERE (kind='text' AND text LIKE ? ESCAPE '\\') OR (kind='file' AND file_meta LIKE ? ESCAPE '\\') " +
+        'ORDER BY ts DESC LIMIT ?',
+      [like, like, limit]
+    ).reverse();
   }
   listChatMessages(limit = 200, beforeTs = null) {
     if (beforeTs) {

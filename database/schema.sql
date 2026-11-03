@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     sender_name TEXT NOT NULL,
     kind        TEXT NOT NULL DEFAULT 'text',
     text        TEXT,
-    file_meta   TEXT
+    file_meta   TEXT,
+    reply_meta  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_chat_messages_ts ON chat_messages(ts);

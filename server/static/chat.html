@@ -72,10 +72,50 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
 .m-head{font-size:11px;color:var(--muted);margin-bottom:2px}
 .row-me .m-head{text-align:right}
 .sysmsg{align-self:center;font-size:12px;color:var(--muted);margin:6px 0}
-/* 撤回按钮：悬停自己的消息才出现 */
-.recall{display:none;margin-left:8px;font-size:11px;color:var(--muted);cursor:pointer;border:1px solid var(--line);border-radius:6px;padding:1px 6px;background:var(--panel)}
+/* @提及高亮 */
+.mention{background:rgba(37,99,235,.15);color:var(--accent);border-radius:4px;padding:0 3px;font-weight:600}
+.mention.at-me{background:rgba(234,88,12,.18);color:#ea580c}
+/* 消息内引用块 */
+.quote{border-left:3px solid var(--accent);background:var(--hover);border-radius:6px;padding:4px 8px;margin-bottom:4px;font-size:12px;cursor:pointer;opacity:.85;max-width:100%;overflow:hidden}
+.quote:hover{opacity:1}
+.quote .q-name{font-weight:600;color:var(--accent)}
+.quote .q-txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+/* 跳转定位高亮动画 */
+@keyframes jumphl{0%{background:rgba(250,204,21,.4)}100%{background:transparent}}
+.row-m.jump-hl{animation:jumphl 2.2s ease-out;border-radius:10px}
+/* 输入区上方的引用条 */
+.reply-bar{display:none;align-items:center;gap:8px;background:var(--hover);border:1px solid var(--line);border-radius:10px;padding:6px 10px;font-size:12px}
+.reply-bar.on{display:flex}
+.reply-bar .q-who{font-weight:600;color:var(--accent);flex-shrink:0}
+.reply-bar .q-prev{flex:1;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.reply-bar .q-x{cursor:pointer;color:var(--muted);border:none;background:none;font-size:14px}
+.reply-bar .q-x:hover{color:var(--red)}
+/* @ 成员补全面板 */
+.at-panel{display:none;position:absolute;bottom:100%;left:0;right:0;max-height:180px;overflow-y:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 -6px 24px rgba(0,0,0,.12);margin-bottom:6px;z-index:30}
+.at-panel.on{display:block}
+.at-item{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;font-size:13px}
+.at-item:hover,.at-item.sel{background:var(--accent-soft)}
+.at-item .avatar{width:24px;height:24px;font-size:11px}
+/* 搜索面板 */
+.search-wrap{display:none;padding:8px 18px;background:var(--panel);border-bottom:1px solid var(--line)}
+.search-wrap.on{display:block}
+.search-row{display:flex;gap:8px;align-items:center}
+.search-row input{flex:1;border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:13px;outline:none;background:var(--bg);color:var(--txt)}
+.search-row input:focus{border-color:var(--accent)}
+.search-res{max-height:220px;overflow-y:auto;margin-top:8px;display:none}
+.search-res.on{display:block}
+.s-item{padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13px;display:flex;gap:10px;align-items:baseline}
+.s-item:hover{background:var(--accent-soft)}
+.s-item .s-who{font-weight:600;flex-shrink:0}
+.s-item .s-txt{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--txt)}
+.s-item .s-ts{font-size:11px;color:var(--muted);flex-shrink:0}
+.s-item mark{background:rgba(250,204,21,.45);color:inherit;padding:0 1px;border-radius:2px}
+.s-empty{font-size:12px;color:var(--muted);text-align:center;padding:10px}
+/* 撤回/回复按钮：悬停消息才出现 */
+.recall,.mreply{display:none;margin-left:8px;font-size:11px;color:var(--muted);cursor:pointer;border:1px solid var(--line);border-radius:6px;padding:1px 6px;background:var(--panel)}
 .recall:hover{color:var(--red);border-color:var(--red)}
-.row-m:hover .recall{display:inline-block}
+.mreply:hover{color:var(--accent);border-color:var(--accent)}
+.row-m:hover .recall,.row-m:hover .mreply{display:inline-block}
 /* 待确认/失败消息 */
 .pend{display:flex;gap:10px;margin-top:8px;align-items:flex-end;flex-direction:row-reverse}
 .pend .bubble{background:var(--panel);border:1px dashed var(--line);color:var(--muted);opacity:.85}
@@ -188,6 +228,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
       </div>
       <span class="sp"></span>
       <div class="hgroup">
+        <button class="btn ghost" id="btnSearch" title="搜索会话记录">🔍</button>
         <button class="btn ghost" id="btnTheme" title="切换主题（跟随系统/浅色/深色）">🌓</button>
         <button class="btn ghost" id="btnScreen" style="display:none">🖥 <span class="lbl">屏幕共享</span></button>
         <span class="sep"></span>
@@ -202,6 +243,20 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
     <div class="typing" id="typing"></div>
     <div class="uplist" id="uplist"></div>
     <div class="composer">
+      <div class="search-wrap" id="searchWrap">
+        <div class="search-row">
+          <input id="searchInput" placeholder="搜索消息内容与文件名…" maxlength="100" />
+          <button class="btn ghost" id="btnSearchClose" title="关闭搜索">✕</button>
+        </div>
+        <div class="search-res" id="searchRes"></div>
+      </div>
+      <div class="reply-bar" id="replyBar">
+        <span>↩</span><span class="q-who" id="replyWho"></span><span class="q-prev" id="replyPrev"></span>
+        <button class="q-x" id="replyCancel" title="取消引用">✕</button>
+      </div>
+      <div style="position:relative">
+        <div class="at-panel" id="atPanel"></div>
+      </div>
       <div class="pending" id="pending"></div>
       <div class="c-row">
         <button class="icon-btn" id="btnFile" title="发送文件">📎</button>
@@ -265,6 +320,9 @@ var pendingFiles=[]; // {fileId,name,size,mime,relPath,previewUrl}
 /* v1.16.0 会话增强状态 */
 var pendingMsgs=[];   // 已发送未确认 {cmid,kind,text,files,at,status:'sending'|'failed',timer}
 var unread=0;         // 未读数（窗口失焦时累计，聚焦清零）
+/* v1.17.0：引用回复 / @提及 / 搜索 */
+var replyTarget=null; // {id,name,preview,kind,ts}
+var atSel=0, atItems=[]; // @ 补全面板选中项
 
 /* ---------- WS ---------- */
 function wsUrl(){
@@ -466,23 +524,55 @@ function linkify(s){
     return '<a href="'+u+'" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline">'+u+'</a>';
   });
 }
+/* @提及高亮：匹配当前成员名；@我 用醒目色（在转义后的文本上做，名字也走转义防串） */
+function mentionify(escaped){
+  var uniq={};
+  members.forEach(function(m){
+    var n=String(m.name||'').trim();
+    if(n && n.length<=20 && !uniq[n]) uniq[n]=1;
+  });
+  var out=escaped;
+  Object.keys(uniq).forEach(function(raw){
+    var nEsc=esc(raw);
+    var re=new RegExp('@'+raw.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?![\\w\\u4e00-\\u9fa5])','g');
+    out=out.replace(re, function(mm){
+      var atMe = raw===myName;
+      return '<span class="mention'+(atMe?' at-me':'')+'">'+mm+'</span>';
+    });
+  });
+  return out;
+}
+/* 引用元数据：新消息带 reply，历史行带 reply_meta（JSON 字符串） */
+function parseReply(r){
+  if(r.reply) return r.reply;
+  if(r.reply_meta){ try{ return JSON.parse(r.reply_meta); }catch(e){} }
+  return null;
+}
+function quoteHtml(rp){
+  if(!rp) return '';
+  return '<div class="quote" data-jump="'+esc(rp.id)+'" data-jts="'+(Number(rp.ts)||0)+'">'+
+    '<span class="q-name">'+esc(rp.name||'')+'</span>'+
+    '<div class="q-txt">'+esc(rp.kind==='file'?'[文件] ':'')+esc(rp.preview||'')+'</div></div>';
+}
 
 function renderMsg(r,noScroll){
   var mine = r.sender_id===selfId;
   var wrap=document.createElement('div');
   wrap.className='row-m '+(mine?'me':'other');
   wrap.setAttribute('data-row', r.id);
+  var rp=parseReply(r);
   var inner='';
   if(r.kind==='text'){
-    inner='<div class="bubble">'+linkify(esc(r.text))+'</div>';
+    inner='<div class="bubble">'+quoteHtml(rp)+linkify(mentionify(esc(r.text)))+'</div>';
   } else if(r.kind==='file'){
     var files=[]; try{ files=JSON.parse(r.file_meta||'[]'); }catch(e){}
-    inner='<div class="bubble">'+files.map(fileHtml).join('')+'</div>';
+    inner='<div class="bubble">'+quoteHtml(rp)+files.map(fileHtml).join('')+'</div>';
   }
-  // 自己的消息悬停可撤回（服务端校验归属权）
+  // 悬停操作：自己的消息可撤回（服务端校验归属权）；所有人可引用回复
   var recallHtml = mine ? '<span class="recall" data-recall="'+esc(r.id)+'" title="撤回这条消息">撤回</span>' : '';
+  var replyBtn = '<span class="mreply" data-reply="'+esc(r.id)+'" title="引用回复这条消息">回复</span>';
   wrap.innerHTML='<div class="avatar" style="width:28px;height:28px;font-size:12px;background:'+(mine?'#7c3aed':'var(--accent)')+'">'+esc((r.sender_name||'?').slice(0,1).toUpperCase())+'</div>'+
-    '<div style="min-width:0"><div class="m-head">'+esc(r.sender_name)+' · '+fmtTs(r.ts)+recallHtml+'</div>'+inner+'</div>';
+    '<div style="min-width:0"><div class="m-head">'+esc(r.sender_name)+' · '+fmtTs(r.ts)+recallHtml+replyBtn+'</div>'+inner+'</div>';
   msgsEl.appendChild(wrap);
   if(!noScroll) scrollBottom();
 }
@@ -508,6 +598,7 @@ function notify(r){
     if(document.hasFocus()) return;
     if(!Notification || Notification.permission!=='granted') return;
     var body = r.kind==='text' ? String(r.text||'').slice(0,80) : '[文件] '+(function(){ try{ return JSON.parse(r.file_meta||'[]').map(function(f){return f.name;}).join('、'); }catch(e){ return ''; } })();
+    if(r.kind==='text' && myName && String(r.text||'').indexOf('@'+myName)>=0) body='【有人@我】'+body; // v1.17.0 @我提醒
     var n = new Notification(r.sender_name, { body: body, tag:r.id });
     n.onclick = function(){ window.focus(); resetUnread(); };
   }catch(e){}
@@ -519,12 +610,15 @@ function sendText(){
   var t=inputEl.value.trim();
   if(!t) return;
   inputEl.value=''; inputEl.style.height='auto';
+  closeAt();
   var id=cmid();
+  var payload={type:'chat.send', text:t, clientMsgId:id};
+  if(replyTarget){ payload.reply={id:replyTarget.id,name:replyTarget.name,preview:replyTarget.preview,kind:replyTarget.kind,ts:replyTarget.ts}; clearReply(); }
   var p={cmid:id, kind:'text', text:t, at:Date.now(), status:'sending'};
   p.timer=setTimeout(function(){ markFailed(id); }, 10000);
   pendingMsgs.push(p);
   renderPendingMsgs(); scrollBottom();
-  send({type:'chat.send', text:t, clientMsgId:id});
+  send(payload);
   sendTyping(false);
 }
 function confirmPending(cmid){
@@ -570,7 +664,7 @@ function renderPendingMsgs(){
   });
   if(pendingMsgs.length) scrollBottom();
 }
-// 撤回 / 重发 / 取消 事件委托
+// 撤回 / 重发 / 取消 / 引用 / 定位 事件委托
 msgsEl.addEventListener('click', function(e){
   var t=e.target;
   if(t.dataset && t.dataset.recall){
@@ -579,14 +673,158 @@ msgsEl.addEventListener('click', function(e){
     t.style.display='none';
   } else if(t.dataset && t.dataset.resend){ resendPending(t.dataset.resend); }
   else if(t.dataset && t.dataset.drop){ dropPending(t.dataset.drop); }
+  else if(t.dataset && t.dataset.reply){ setReplyById(t.dataset.reply); }
+  else if(t.dataset && t.dataset.jump){ jumpToMessage(t.dataset.jump, Number(t.dataset.jts)||0); }
 });
+/* ---------- 引用回复（v1.17.0） ---------- */
+function previewOf(rec){
+  if(rec.kind==='text') return String(rec.text||'');
+  try{ return '[文件] '+(JSON.parse(rec.file_meta||'[]').map(function(f){return f.name;}).join('、')||''); }catch(e){ return '[文件]'; }
+}
+function setReplyById(id){
+  var rec=null;
+  for(var i=0;i<history.length;i++){ if(history[i].id===id){ rec=history[i]; break; } }
+  if(!rec) return;
+  replyTarget={id:id, name:rec.sender_name||'', preview:previewOf(rec), kind:rec.kind, ts:rec.ts};
+  $('replyWho').textContent='↩ '+replyTarget.name;
+  $('replyPrev').textContent=replyTarget.preview;
+  $('replyBar').classList.add('on');
+  inputEl.focus();
+}
+function clearReply(){
+  replyTarget=null;
+  $('replyBar').classList.remove('on');
+}
+$('replyCancel').onclick=clearReply;
+
+/* ---------- @提及补全（v1.17.0） ---------- */
+function atMembers(){
+  return members.filter(function(m){ return m.id!==selfId && !(myDeviceId && m.deviceId===myDeviceId) && m.name; });
+}
+function atQuery(){
+  var pos=inputEl.selectionStart;
+  if(pos==null) return null;
+  var before=inputEl.value.slice(0,pos);
+  var m=before.match(/(?:^|\s)@([^\s@]{0,12})$/);
+  return m? {q:m[1], start:pos-m[1].length-1} : null;
+}
+function renderAtPanel(){
+  var info=atQuery();
+  var panel=$('atPanel');
+  if(!info){ closeAt(); return; }
+  var q=info.q.toLowerCase();
+  atItems=atMembers().filter(function(m){ return !q || String(m.name).toLowerCase().indexOf(q)>=0; }).slice(0,8);
+  if(!atItems.length){ closeAt(); return; }
+  if(atSel>=atItems.length) atSel=0;
+  panel.innerHTML=atItems.map(function(m,i){
+    return '<div class="at-item'+(i===atSel?' sel':'')+'" data-ati="'+i+'"><div class="avatar" style="width:24px;height:24px;font-size:11px">'+esc(String(m.name).slice(0,1).toUpperCase())+'</div><span>'+esc(m.name)+'</span></div>';
+  }).join('');
+  panel.classList.add('on');
+  Array.prototype.forEach.call(panel.querySelectorAll('[data-ati]'),function(el){
+    el.addEventListener('mousedown',function(ev){ ev.preventDefault(); pickAt(Number(el.dataset.ati)); });
+  });
+}
+function closeAt(){ atSel=0; atItems=[]; var p=$('atPanel'); if(p) p.classList.remove('on'); }
+function syncAtSel(){
+  var panel=$('atPanel');
+  Array.prototype.forEach.call(panel.querySelectorAll('[data-ati]'),function(el){
+    el.classList.toggle('sel', Number(el.dataset.ati)===atSel);
+  });
+  var sel=panel.querySelector('.at-item.sel'); if(sel) sel.scrollIntoView({block:'nearest'});
+}
+function pickAt(i){
+  var info=atQuery();
+  if(!info || !atItems[i]) { closeAt(); return; }
+  var name=atItems[i].name;
+  var pos=inputEl.selectionStart;
+  var after=inputEl.value.slice(pos);
+  inputEl.value=inputEl.value.slice(0, info.start)+'@'+name+' '+after;
+  var np=info.start+name.length+2;
+  inputEl.setSelectionRange(np,np);
+  closeAt();
+  inputEl.focus();
+}
+
+/* ---------- 跳转定位（v1.17.0）：引用/搜索结果点击后滚到消息并高亮 ---------- */
+function cssEsc(s){ return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/["\\\]]/g,'\\$&'); }
+async function jumpToMessage(id, ts){
+  var el=msgsEl.querySelector('[data-row="'+cssEsc(id)+'"]');
+  if(!el && ts){
+    try{
+      var r=await fetch('/api/chat/history?before='+(Number(ts)+1)+'&limit=200');
+      var page=await r.json();
+      if(page && page.length){ history=page; renderAll(); el=msgsEl.querySelector('[data-row="'+cssEsc(id)+'"]'); }
+    }catch(e){}
+  }
+  if(el){
+    el.scrollIntoView({block:'center'});
+    el.classList.remove('jump-hl'); void el.offsetWidth; el.classList.add('jump-hl');
+  } else {
+    appendSys('未能定位该消息（可能已被撤回或超出本地保留范围）');
+  }
+}
+
+/* ---------- 会话搜索（v1.17.0）：文本内容 + 文件名，点击结果定位 ---------- */
+var searchTimer=null;
+$('btnSearch').onclick=function(){
+  var w=$('searchWrap');
+  var on=w.classList.toggle('on');
+  if(on){ $('searchInput').focus(); }
+  else { $('searchRes').classList.remove('on'); $('searchRes').innerHTML=''; $('searchInput').value=''; }
+};
+$('btnSearchClose').onclick=function(){ $('btnSearch').click(); };
+$('searchInput').addEventListener('input',function(){
+  clearTimeout(searchTimer);
+  var q=this.value.trim();
+  if(!q){ $('searchRes').classList.remove('on'); $('searchRes').innerHTML=''; return; }
+  searchTimer=setTimeout(function(){ doSearch(q); },300);
+});
+$('searchInput').addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); clearTimeout(searchTimer); doSearch(this.value.trim()); } });
+async function doSearch(q){
+  if(!q) return;
+  try{
+    var r=await fetch('/api/chat/search?q='+encodeURIComponent(q));
+    var list=await r.json();
+    renderSearchResults(Array.isArray(list)?list:[], q);
+  }catch(e){}
+}
+function snippet(r, q){
+  var base = r.kind==='text' ? String(r.text||'') : '[文件] '+(function(){ try{ return JSON.parse(r.file_meta||'[]').map(function(f){return f.name;}).join('、'); }catch(e){ return ''; } })();
+  var escd=esc(base);
+  var qEsc=esc(q);
+  var idx=escd.toLowerCase().indexOf(qEsc.toLowerCase());
+  if(idx<0) return escd.slice(0,120);
+  var start=Math.max(0, idx-40);
+  return (start>0?'…':'')+escd.slice(start, idx)+'<mark>'+escd.slice(idx, idx+qEsc.length)+'</mark>'+
+    escd.slice(idx+qEsc.length, idx+qEsc.length+60)+(idx+qEsc.length+60<escd.length?'…':'');
+}
+function renderSearchResults(list, q){
+  var box=$('searchRes');
+  if(!list.length){ box.innerHTML='<div class="s-empty">没有找到匹配的消息</div>'; box.classList.add('on'); return; }
+  box.innerHTML=list.map(function(r){
+    return '<div class="s-item" data-sid="'+esc(r.id)+'" data-sts="'+r.ts+'"><span class="s-who">'+esc(r.sender_name)+'</span><span class="s-txt">'+snippet(r,q)+'</span><span class="s-ts">'+fmtDay(r.ts)+' '+fmtTs(r.ts)+'</span></div>';
+  }).join('');
+  box.classList.add('on');
+  Array.prototype.forEach.call(box.querySelectorAll('[data-sid]'),function(el){
+    el.onclick=function(){ jumpToMessage(el.dataset.sid, Number(el.dataset.sts)); };
+  });
+}
+
 $('btnSend').onclick=sendText;
 inputEl.addEventListener('keydown',function(e){
+  // @ 补全面板打开时，方向键/Enter/Tab 优先用于选人
+  if($('atPanel').classList.contains('on') && atItems.length){
+    if(e.key==='ArrowDown'){ e.preventDefault(); atSel=(atSel+1)%atItems.length; syncAtSel(); return; }
+    if(e.key==='ArrowUp'){ e.preventDefault(); atSel=(atSel-1+atItems.length)%atItems.length; syncAtSel(); return; }
+    if(e.key==='Enter'||e.key==='Tab'){ e.preventDefault(); pickAt(atSel); return; }
+    if(e.key==='Escape'){ e.preventDefault(); closeAt(); return; }
+  }
   if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendText(); }
 });
 inputEl.addEventListener('input',function(){
   this.style.height='auto'; this.style.height=Math.min(this.scrollHeight,120)+'px';
   sendTyping(true);
+  renderAtPanel();
 });
 
 /* ---------- 输入状态 ---------- */
