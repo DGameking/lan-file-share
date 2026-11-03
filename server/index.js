@@ -162,6 +162,7 @@ class LanFileShare extends require('events').EventEmitter {
         clipboardSync: true,
         autoAcceptDrop: true,
         dropQuotaGB: 2,
+        upnp: true,
         https: false,
         serverMode: false,
         autoUpdateCheck: true,
@@ -322,6 +323,31 @@ class LanFileShare extends require('events').EventEmitter {
         } catch (e) {}
       });
     });
+
+    // UPnP 自动端口映射（尽力而为：成功后跨 NAT 可直连，失败走会合点中继互不影响）
+    if (this.settings.upnp !== false) {
+      setTimeout(() => this._upnpMap().catch(() => {}), 5000);
+    }
+  }
+
+  /** UPnP 自动端口映射（HTTP TCP + UDP 心跳），结果存 upnpInfo 供心跳/注册携带 */
+  async _upnpMap() {
+    try {
+      const upnp = require('../discovery/upnp');
+      const ports = [{ port: this.httpPort, protocol: 'TCP' }];
+      if (this.udpPort) ports.push({ port: this.udpPort, protocol: 'UDP' });
+      const r = await upnp.mapPorts(this.localIp, ports);
+      if (r.ok) {
+        this.upnpInfo = { externalIp: r.externalIp, mapped: r.mapped, gateway: r.gateway, ts: Date.now() };
+        this.logger.info('upnp', 'UPnP 端口映射成功（跨网段可直连）', { externalIp: r.externalIp || '未知', mapped: r.mapped.map((m) => `${m.protocol}/${m.port}`).join(',') });
+      } else {
+        this.logger.info('upnp', 'UPnP 不可用，跨网段将走会合点中继', { reason: r.reason || '' });
+      }
+      return r;
+    } catch (e) {
+      this.logger.error && this.logger.error('upnp', 'UPnP 映射异常', e.message);
+      return { ok: false, reason: e.message };
+    }
   }
 
   _onWsMessage(ws, msg) {
@@ -348,6 +374,7 @@ class LanFileShare extends require('events').EventEmitter {
       os: this.osType,
       deviceType: this.settings.deviceType || (this.osType === 'android' ? 'phone' : this.osType === 'darwin' ? 'laptop' : 'pc'),
       alias: String(this.settings.deviceAlias || '').trim().slice(0, 40),
+      wanPort: (this.upnpInfo && (this.upnpInfo.mapped || []).find((m) => m.protocol === 'TCP') || {}).port || null,
       version: this.version,
       fingerprint: this.fingerprint,
       sharedCount: this.enabledShareCount(),
@@ -847,6 +874,7 @@ class LanFileShare extends require('events').EventEmitter {
       os: this.osType,
       deviceType: this.settings.deviceType || (this.osType === 'android' ? 'phone' : this.osType === 'darwin' ? 'laptop' : 'pc'),
       alias: String(this.settings.deviceAlias || '').trim().slice(0, 40),
+      wanPort: (this.upnpInfo && (this.upnpInfo.mapped || []).find((m) => m.protocol === 'TCP') || {}).port || null,
       version: this.version,
       fingerprint: this.fingerprint,
       sharedCount: this.enabledShareCount(),

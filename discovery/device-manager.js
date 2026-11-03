@@ -36,6 +36,7 @@ class DeviceManager extends EventEmitter {
       latency: info.latency != null ? info.latency : existing ? existing.latency : null,
       relay: info.relay != null ? !!info.relay : existing ? !!existing.relay : false,
       relay_hub: info.relayHub || (existing ? existing.relay_hub : null),
+      direct_port: info.directPort != null ? info.directPort : (existing ? existing.direct_port : null),
     };
     this.devices.set(merged.device_id, merged);
     if (!wasOnline) this.emit('online', merged);

@@ -232,6 +232,19 @@ async function run(engine) {
     log('会合点', false, e.message);
   }
 
+  // 14. UPnP 端口映射（跨网段直连增强；不可用走会合点中继）
+  try {
+    if (engine.settings.upnp === false) {
+      log('UPnP', true, '已在设置中关闭（跨网段将走会合点中继）');
+    } else if (engine.upnpInfo && engine.upnpInfo.mapped && engine.upnpInfo.mapped.length) {
+      log('UPnP', true, `已映射 ${engine.upnpInfo.mapped.map((m) => `${m.protocol}/${m.port}`).join('、')}（网关 ${engine.upnpInfo.gateway || '-'}），跨网段可直连满速传输`);
+    } else {
+      log('UPnP', true, '未映射（路由器可能关闭了 UPnP）— 不影响使用，跨网段自动走会合点中继');
+    }
+  } catch (e) {
+    log('UPnP', false, e.message);
+  }
+
   const failed = checks.filter((c) => !c.ok);
   const fixed = checks.filter((c) => c.fixed);
   const summary = failed.length

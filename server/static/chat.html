@@ -56,6 +56,9 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
 .btn:disabled{opacity:.5;cursor:not-allowed}
 /* 消息区 */
 .msgs{flex:1;overflow-y:auto;padding:18px 22px;display:flex;flex-direction:column;gap:4px}
+.older-btn{margin:0 0 10px;align-self:center;background:#eef2f8;border:1px solid #dde3ee;color:#4a5568;border-radius:14px;padding:5px 16px;font-size:12px;cursor:pointer}
+.older-btn:hover{background:#e2e8f3}
+.older-btn:disabled{opacity:.5;cursor:default}
 .day{align-self:center;font-size:11px;color:var(--muted);background:#e8ecf3;border-radius:10px;padding:2px 10px;margin:10px 0}
 .row-m{display:flex;gap:10px;margin-top:8px;align-items:flex-end}
 .row-m.me{flex-direction:row-reverse}
@@ -317,6 +320,7 @@ function isVideo(mime,name){ return /^video\//.test(mime||'')||/\.(mp4|webm)$/i.
 
 function renderAll(){
   msgsEl.innerHTML='';
+  renderOlderBtn();
   var lastDay='';
   history.forEach(function(r){
     var day=fmtDay(r.ts);
@@ -325,6 +329,48 @@ function renderAll(){
   });
   renderMembers();
   scrollBottom(true);
+}
+/* 加载更早消息（分页，服务端 before 游标） */
+var loadingOlder=false;
+function renderOlderBtn(){
+  var btn=document.getElementById('olderBtn');
+  if(!btn){
+    btn=document.createElement('button');
+    btn.id='olderBtn'; btn.className='older-btn'; btn.textContent='加载更早的消息';
+    btn.onclick=loadOlder;
+    msgsEl.parentNode.insertBefore(btn, msgsEl);
+  }
+  btn.style.display = history.length>=200 ? '' : 'none';
+}
+async function loadOlder(){
+  if(loadingOlder || !history.length) return;
+  loadingOlder=true;
+  var btn=document.getElementById('olderBtn'); btn.textContent='加载中…'; btn.disabled=true;
+  var oldest=history[0].ts;
+  var prevHeight=msgsEl.scrollHeight;
+  try{
+    var r=await fetch('/api/chat/history?before='+oldest+'&limit=200');
+    var older=await r.json();
+    if(older && older.length){
+      history=older.concat(history);
+      var atBottom=msgsEl.scrollHeight-msgsEl.scrollTop-msgsEl.clientHeight<120;
+      msgsEl.innerHTML='';
+      renderOlderBtn();
+      var lastDay='';
+      history.forEach(function(r2){
+        var day=fmtDay(r2.ts);
+        if(day!==lastDay){ lastDay=day; addDay(day); }
+        renderMsg(r2,true);
+      });
+      // 保持视口位置（预置更早内容不跳动）
+      msgsEl.scrollTop=msgsEl.scrollHeight-prevHeight;
+      if(older.length<200 && btn) btn.style.display='none';
+    } else {
+      if(btn) btn.style.display='none';
+    }
+  }catch(e){}
+  if(btn){ btn.textContent='加载更早的消息'; btn.disabled=false; }
+  loadingOlder=false;
 }
 function addDay(d){ var el=document.createElement('div'); el.className='day'; el.textContent=d; msgsEl.appendChild(el); }
 /* 系统提示（成员入离场 / 剪贴板同步 / 通话状态等） */

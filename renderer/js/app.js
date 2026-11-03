@@ -644,6 +644,7 @@
             <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.autoAcceptDrop" @change="onCheck($event,'autoAcceptDrop')" /> 自动接收其他设备的投送文件</label>
             <label class="field">接收配额（GB，超出按最旧文件自动清理）<input type="number" min="0.5" step="0.5" style="width:100px" :value="store.settings.dropQuotaGB" @change="onText($event,'dropQuotaGB')" /></label>
             <label class="field">投送 PIN（对方投送给本机时需提供；本机投送给对方时自动携带）<input type="text" :value="store.settings.dropPin" @change="onText($event,'dropPin')" style="width:160px" placeholder="留空不启用" /></label>
+            <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.upnp !== false" @change="onCheck($event,'upnp')" /> UPnP 自动端口映射（路由器支持时跨网段可直连满速传输；失败自动走会合点中继）</label>
             <label class="field">设备别名（对端看到的友好名称，留空用主机名）<input type="text" :value="store.settings.deviceAlias" @change="onText($event,'deviceAlias')" style="width:180px" placeholder="例：书房台式机" /></label>
             <label class="field">设备类型<select :value="store.settings.deviceType" @change="onText($event,'deviceType')" style="width:130px"><option value="">自动（按系统推断）</option><option value="pc">台式机</option><option value="laptop">笔记本</option><option value="phone">手机/平板</option><option value="nas">NAS/服务器</option></select></label>
             <label class="field">跨网段会合点（中心端 IP:端口，逗号分隔；填光猫层 NAS 地址即可打通双路由器不同网段）<input type="text" :value="store.settings.rendezvous" @change="onText($event,'rendezvous')" placeholder="例：192.168.10.5:8080" /></label>
@@ -950,7 +951,27 @@
         });
       }
 
-      async function uploadOne(d, f, t) {
+      // 中继设备直连探测：对端有 UPnP 映射（direct_port=网关 WAN 侧端口）时优先直连（满速），失败回退中继
+      const directCache = new Map(); // deviceId -> true/false
+      async function directView(d) {
+        if (!d.relay || !d.direct_port) return d;
+        if (directCache.get(d.device_id)) return { ...d, port: d.direct_port, relay: false, viaDirect: true };
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 1500);
+          const r = await fetch(`http://${d.host}:${d.direct_port}/api/self`, { signal: ctrl.signal });
+          clearTimeout(t);
+          if (r.ok) {
+            directCache.set(d.device_id, true);
+            return { ...d, port: d.direct_port, relay: false, viaDirect: true };
+          }
+        } catch (e) {}
+        directCache.set(d.device_id, false);
+        return d;
+      }
+
+      async function uploadOne(d0, f, t) {
+        const d = await directView(d0);
         try {
           if (d.relay) {
             await relayOne(d, f, f.name);
@@ -958,6 +979,7 @@
             toast(`已中继投送给「${d.device_name}」：${f.name}`, 'ok');
             return;
           }
+          const viaTag = d.viaDirect ? '（直连）' : '';
           if (f.size <= CHUNK_THRESHOLD) {
             const sha = await sha256Hex(f);
             const sid = await prepareDrop(d, [{ name: f.name, size: f.size, sha256: sha, mime: f.type || 'application/octet-stream' }], false);
@@ -973,7 +995,7 @@
               xhr.send(fd);
             });
             t.status = 'done'; t.pct = 100;
-            toast(`已投送给「${d.device_name}」：${f.name}`, 'ok');
+            toast(`已投送给「${d.device_name}」${viaTag}：${f.name}`, 'ok');
             return;
           }
 
@@ -1014,7 +1036,7 @@
           });
           if (!fin.ok) throw new Error('finish HTTP ' + fin.status);
           t.status = 'done'; t.pct = 100;
-          toast(`已投送给「${d.device_name}」：${f.name}`, 'ok');
+          toast(`已投送给「${d.device_name}」${viaTag}：${f.name}`, 'ok');
         } catch (e) {
           t.status = 'error';
           toast(`投送失败：${f.name}（${e.message || '网络错误'}）`, 'warn');
@@ -1030,7 +1052,8 @@
       function onDragOver(d, e) { e.preventDefault(); dragDevice.value = d.device_id; }
       function onDragLeave() { dragDevice.value = null; }
 
-      async function sendClip(d) {
+      async function sendClip(d0) {
+        const d = await directView(d0);
         const r = await api.invoke('clip:read');
         if (!r.ok || !r.data) return toast('本机剪贴板为空', 'warn');
         try {
