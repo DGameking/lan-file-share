@@ -74,7 +74,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     kind        TEXT NOT NULL DEFAULT 'text',
     text        TEXT,
     file_meta   TEXT,
-    reply_meta  TEXT
+    reply_meta  TEXT,
+    to_id       TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_chat_messages_ts ON chat_messages(ts);

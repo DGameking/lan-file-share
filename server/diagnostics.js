@@ -245,6 +245,20 @@ async function run(engine) {
     log('UPnP', false, e.message);
   }
 
+  // 15. LocalSend 互通网关（v1.19.0：与 LocalSend 官方客户端双向收发）
+  try {
+    if (engine.settings.localsend === false) {
+      log('LocalSend 互通', true, '已在设置中关闭');
+    } else if (engine.localsend) {
+      const n = engine.localsend.discovered.size;
+      log('LocalSend 互通', true, `已启动（${engine.localsend.protocol.toUpperCase()} :${engine.localsend.port}）${n ? `，已发现 ${n} 台 LocalSend 设备` : '，尚未发现 LocalSend 设备（对方需在同一局域网）'}`);
+    } else {
+      log('LocalSend 互通', false, '网关未运行（可能端口被占用，查看运行日志）');
+    }
+  } catch (e) {
+    log('LocalSend 互通', false, e.message);
+  }
+
   const failed = checks.filter((c) => !c.ok);
   const fixed = checks.filter((c) => c.fixed);
   const summary = failed.length

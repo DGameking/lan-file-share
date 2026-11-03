@@ -247,6 +247,22 @@ function registerIpc() {
     return { ok: true };
   });
 
+  // LocalSend 互通投送（v1.19.0）：渲染层无法连自签 HTTPS，由主进程代发
+  ipcMain.handle('localsend:send', async (_e, payload = {}) => {
+    if (!engine || !engine.localsend) return { ok: false, error: 'LocalSend 网关未运行' };
+    const { host, port, protocol, files } = payload;
+    if (!host || !Array.isArray(files) || !files.length) return { ok: false, error: 'bad_request' };
+    try {
+      const r = await engine.localsend.sendFiles(
+        { host, port: Number(port) || 53317, protocol: protocol === 'http' ? 'http' : 'https' },
+        files.map((f) => ({ path: String(f.path || ''), name: String(f.name || ''), size: Number(f.size) || 0, mime: String(f.mime || '') }))
+      );
+      return { ok: true, ...r };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
   // 剪贴板（供渲染层读取/写入系统剪贴板）
   ipcMain.handle('clip:read', () => ({ ok: true, data: clipboard.readText() || '' }));
   ipcMain.handle('clip:write', (_e, text) => {

@@ -38,6 +38,7 @@ const { registerApi } = require('./api');
 const ChatManager = require('./chat');
 const BridgeManager = require('./bridge');
 const dropHandler = require('./drop');
+const LocalSendGateway = require('./localsend');
 const hubHandler = require('./hub');
 const { RendezvousClient } = require('../discovery/rendezvous');
 const browseHandler = require('./handlers/browse');
@@ -163,6 +164,8 @@ class LanFileShare extends require('events').EventEmitter {
         autoAcceptDrop: true,
         dropQuotaGB: 2,
         upnp: true,
+        localsend: true,
+        localsendPort: 53317,
         https: false,
         serverMode: false,
         autoUpdateCheck: true,
@@ -267,6 +270,26 @@ class LanFileShare extends require('events').EventEmitter {
     hubHandler.register(this);
     this.rendezvous = new RendezvousClient(this);
     this.rendezvous.start();
+    // LocalSend 互通网关（v1.19.0）：与 LocalSend 官方客户端双向收发
+    if (this.settings.localsend !== false) {
+      this.localsend = new LocalSendGateway(this);
+      this.localsend.start().catch((e) => {
+        this.logger && this.logger.warn('localsend', 'LocalSend 网关启动失败', e.message);
+        this.localsend = null;
+      });
+    }
+    // LocalSend 状态（设置页 / 诊断）
+    this.app.get('/api/localsend/status', (req, res) => {
+      const ls = this.localsend;
+      res.json({
+        ok: true,
+        enabled: !!ls,
+        protocol: ls ? ls.protocol : null,
+        port: ls ? ls.port : null,
+        fingerprint: ls ? ls.fingerprint : null,
+        devices: ls ? [...ls.discovered.values()] : [],
+      });
+    });
     // 会合点状态（设置页状态灯 / 自检）
     this.app.get('/api/rendezvous/status', (req, res) => res.json({ ok: true, ...this.rendezvous.status }));
     browseHandler.register(this);

@@ -73,18 +73,20 @@ class ChatManager {
       res.json({ ok: true });
     });
 
-    // 会话历史
+    // 会话历史（v1.18.0：self=身份时过滤私聊，只看群聊 + 与自己相关的私聊）
     app.get('/api/chat/history', (req, res) => {
       const before = req.query.before ? Number(req.query.before) : null;
-      res.json(this.ctx.db.listChatMessages(200, before));
+      const self = req.query.self ? String(req.query.self).slice(0, 64) : null;
+      res.json(this.ctx.db.listChatMessages(200, before, self));
     });
 
-    // 会话消息搜索（v1.17.0）：文本内容 + 文件名，最多返回 50 条
+    // 会话消息搜索（v1.17.0）：文本内容 + 文件名，最多返回 50 条；v1.18.0 起过滤私聊可见性
     app.get('/api/chat/search', (req, res) => {
       const q = String(req.query.q || '').slice(0, 100);
       if (!q.trim()) return res.json([]);
+      const self = req.query.self ? String(req.query.self).slice(0, 64) : null;
       try {
-        res.json(this.ctx.db.searchChatMessages(q, 50));
+        res.json(this.ctx.db.searchChatMessages(q, 50, self));
       } catch (e) {
         res.status(500).json({ error: e.message });
       }
@@ -263,7 +265,7 @@ class ChatManager {
           deviceId: devKey,
           ts: Date.now(),
         });
-        ws.send(JSON.stringify({ event: 'chat.init', payload: { selfId: this.members.get(ws).id, history: this.ctx.db.listChatMessages(200) } }));
+        ws.send(JSON.stringify({ event: 'chat.init', payload: { selfId: this.members.get(ws).id, history: this.ctx.db.listChatMessages(200, null, this.members.get(ws).id) } }));
         this._broadcastMembers();
         return true;
       }
@@ -283,8 +285,19 @@ class ChatManager {
         if (msg.clientMsgId) record.clientMsgId = String(msg.clientMsgId).slice(0, 64); // 发送方确认消息状态用（不落库）
         const reply = this._sanitizeReply(msg.reply);
         if (reply) record.reply = reply;
+        const toId = msg.to ? String(msg.to).slice(0, 64) : null; // v1.18.0 私聊定向投递
+        if (toId) record.to = toId;
         this._persist(record);
-        this._broadcast('chat.msg', record);
+        if (toId) {
+          // 私聊：只定向发给目标本地成员 + 桥接远端（远端 deliverRemote 按本地成员过滤）；
+          // 发送方单独回显（确认 clientMsgId 消息状态）
+          this._broadcast('chat.msg', record, { toId });
+          if (ws.readyState === WebSocket.OPEN) {
+            try { ws.send(JSON.stringify({ event: 'chat.msg', payload: record })); } catch (e) {}
+          }
+        } else {
+          this._broadcast('chat.msg', record);
+        }
         return true;
       }
 
@@ -310,9 +323,18 @@ class ChatManager {
         if (msg.clientMsgId) record.clientMsgId = String(msg.clientMsgId).slice(0, 64); // 发送方确认消息状态用（不落库）
         const reply2 = this._sanitizeReply(msg.reply);
         if (reply2) record.reply = reply2;
+        const toId2 = msg.to ? String(msg.to).slice(0, 64) : null; // v1.18.0 私聊定向投递
+        if (toId2) record.to = toId2;
         this._persist(record);
-        this._broadcast('chat.msg', record);
-        this.ctx.logEvent({ event_type: 'chat_file', device_name: m.name, ip: ws._socketIp || '', result: 'success', detail: { count: files.length } });
+        if (toId2) {
+          this._broadcast('chat.msg', record, { toId: toId2 });
+          if (ws.readyState === WebSocket.OPEN) {
+            try { ws.send(JSON.stringify({ event: 'chat.msg', payload: record })); } catch (e) {}
+          }
+        } else {
+          this._broadcast('chat.msg', record);
+        }
+        this.ctx.logEvent({ event_type: 'chat_file', device_name: m.name, ip: ws._socketIp || '', result: 'success', detail: { count: files.length, pm: !!toId2 } });
         return true;
       }
 
@@ -362,6 +384,7 @@ class ChatManager {
         text: record.text || null,
         file_meta: record.files ? JSON.stringify(record.files) : null,
         reply_meta: record.reply ? JSON.stringify(record.reply) : null,
+        to_id: record.to || null,
       });
       this.ctx.db.pruneChatMessages(MAX_CHAT_MESSAGES);
     } catch (e) {}
@@ -369,12 +392,12 @@ class ChatManager {
 
   _broadcast(event, payload, opts = {}) {
     const msg = JSON.stringify({ event, payload });
-    for (const [peer] of this.members) {
-      if (peer.readyState === WebSocket.OPEN) {
-        try {
-          peer.send(msg);
-        } catch (e) {}
-      }
+    for (const [peer, pm] of this.members) {
+      if (peer.readyState !== WebSocket.OPEN) continue;
+      if (opts.toId && pm.id !== opts.toId) continue; // v1.18.0 私聊：只发给指定成员
+      try {
+        peer.send(msg);
+      } catch (e) {}
     }
     // 本机产生的事件同时桥接给其他设备（deliverRemote 分发的不再外发，避免环路）
     if (opts.bridge !== false && this.ctx.bridge) {
@@ -441,7 +464,13 @@ class ChatManager {
         }
         rec.file_meta = rec.files ? JSON.stringify(rec.files) : rec.file_meta || null;
         this._persist(rec);
-        this._broadcast('chat.msg', rec, { bridge: false });
+        if (rec.to) {
+          // v1.18.0 私聊（跨设备）：远端发来的定向消息只在本机投给目标成员；
+          // 目标不在线时仅落库（目标上线后可从历史加载）
+          this._broadcast('chat.msg', rec, { toId: rec.to, bridge: false });
+        } else {
+          this._broadcast('chat.msg', rec, { bridge: false });
+        }
         break;
       }
       case 'chat.members':

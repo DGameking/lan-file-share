@@ -72,6 +72,15 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
 .m-head{font-size:11px;color:var(--muted);margin-bottom:2px}
 .row-me .m-head{text-align:right}
 .sysmsg{align-self:center;font-size:12px;color:var(--muted);margin:6px 0}
+/* 私聊模式条（v1.18.0） */
+.pm-bar{display:none;align-items:center;gap:8px;background:rgba(124,58,237,.12);border:1px solid rgba(124,58,237,.4);border-radius:10px;padding:6px 10px;font-size:12px}
+.pm-bar.on{display:flex}
+.pm-bar .pm-who{font-weight:600;color:#7c3aed}
+.pm-bar .pm-tip{flex:1;color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.pm-bar .pm-x{cursor:pointer;color:var(--muted);border:none;background:none;font-size:14px}
+.pm-bar .pm-x:hover{color:var(--red)}
+/* 私信徽标 */
+.pm-badge{display:inline-block;font-size:10px;color:#7c3aed;border:1px solid rgba(124,58,237,.5);border-radius:4px;padding:0 4px;margin-right:6px;vertical-align:1px}
 /* @提及高亮 */
 .mention{background:rgba(37,99,235,.15);color:var(--accent);border-radius:4px;padding:0 3px;font-weight:600}
 .mention.at-me{background:rgba(234,88,12,.18);color:#ea580c}
@@ -254,6 +263,10 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
         <span>↩</span><span class="q-who" id="replyWho"></span><span class="q-prev" id="replyPrev"></span>
         <button class="q-x" id="replyCancel" title="取消引用">✕</button>
       </div>
+      <div class="pm-bar" id="pmBar">
+        <span>🔒</span><span class="pm-who" id="pmWho"></span><span class="pm-tip">私聊中 · 消息仅双方可见</span>
+        <button class="pm-x" id="pmCancel" title="退出私聊">✕</button>
+      </div>
       <div style="position:relative">
         <div class="at-panel" id="atPanel"></div>
       </div>
@@ -407,14 +420,36 @@ function renderMembers(){
   prevMembers = list;
   $('mCount').textContent=list.length;
   var mc=$('mCountTop'); if(mc) mc.textContent=list.length;
-  membersEl.innerHTML = list.map(function(m){
+  membersEl.innerHTML = list.map(function(m,i){
     var mine = (m.id===selfId) || (myDeviceId && m.deviceId===myDeviceId);
     var initial = (m.name||'?').slice(0,1).toUpperCase();
-    return '<div class="member"><div class="avatar'+(mine?' me':'')+'">'+initial+'</div>'+
+    // v1.18.0：点其他成员进入私聊（data-pm 委托）
+    var pmAttr = mine ? '' : ' data-pm="'+i+'" style="cursor:pointer" title="点击私聊"';
+    return '<div class="member"'+pmAttr+'><div class="avatar'+(mine?' me':'')+'">'+initial+'</div>'+
       '<div class="m-info"><div class="m-name">'+esc(m.name)+(mine?'（我）':'')+(m.kind==='device'?' <span style="font-size:10px;color:#3b82f6">设备</span>':'')+'</div>'+
-      '<div class="m-kind">'+memberLabel(m.kind)+'</div></div></div>';
+      '<div class="m-kind">'+memberLabel(m.kind)+(mine?'':' · 点击私聊')+'</div></div></div>';
   }).join('');
+  Array.prototype.forEach.call(membersEl.querySelectorAll('[data-pm]'),function(el){
+    el.onclick=function(){ startPm(list[Number(el.dataset.pm)]); };
+  });
 }
+
+/* ---------- 私聊（v1.18.0） ---------- */
+var pmTo=null; // {id,name}
+function startPm(m){
+  if(!m || !m.id) return;
+  pmTo={id:m.id,name:m.name};
+  $('pmWho').textContent=m.name;
+  $('pmBar').classList.add('on');
+  inputEl.placeholder='对 '+m.name+' 说点什么…（仅双方可见）';
+  inputEl.focus();
+}
+function stopPm(){
+  pmTo=null;
+  $('pmBar').classList.remove('on');
+  inputEl.placeholder='输入消息…';
+}
+$('pmCancel').onclick=stopPm;
 
 /* ---------- 消息渲染 ---------- */
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
@@ -457,7 +492,7 @@ async function loadOlder(){
   var oldest=history[0].ts;
   var prevHeight=msgsEl.scrollHeight;
   try{
-    var r=await fetch('/api/chat/history?before='+oldest+'&limit=200');
+    var r=await fetch('/api/chat/history?before='+oldest+'&limit=200&self='+encodeURIComponent(selfId));
     var older=await r.json();
     if(older && older.length){
       history=older.concat(history);
@@ -571,8 +606,9 @@ function renderMsg(r,noScroll){
   // 悬停操作：自己的消息可撤回（服务端校验归属权）；所有人可引用回复
   var recallHtml = mine ? '<span class="recall" data-recall="'+esc(r.id)+'" title="撤回这条消息">撤回</span>' : '';
   var replyBtn = '<span class="mreply" data-reply="'+esc(r.id)+'" title="引用回复这条消息">回复</span>';
+  var pmBadge = r.to ? '<span class="pm-badge">私信</span>' : '';
   wrap.innerHTML='<div class="avatar" style="width:28px;height:28px;font-size:12px;background:'+(mine?'#7c3aed':'var(--accent)')+'">'+esc((r.sender_name||'?').slice(0,1).toUpperCase())+'</div>'+
-    '<div style="min-width:0"><div class="m-head">'+esc(r.sender_name)+' · '+fmtTs(r.ts)+recallHtml+replyBtn+'</div>'+inner+'</div>';
+    '<div style="min-width:0"><div class="m-head">'+pmBadge+esc(r.sender_name)+' · '+fmtTs(r.ts)+recallHtml+replyBtn+'</div>'+inner+'</div>';
   msgsEl.appendChild(wrap);
   if(!noScroll) scrollBottom();
 }
@@ -598,6 +634,7 @@ function notify(r){
     if(document.hasFocus()) return;
     if(!Notification || Notification.permission!=='granted') return;
     var body = r.kind==='text' ? String(r.text||'').slice(0,80) : '[文件] '+(function(){ try{ return JSON.parse(r.file_meta||'[]').map(function(f){return f.name;}).join('、'); }catch(e){ return ''; } })();
+    if(r.to) body='【私信】'+body; // v1.18.0 私聊提醒
     if(r.kind==='text' && myName && String(r.text||'').indexOf('@'+myName)>=0) body='【有人@我】'+body; // v1.17.0 @我提醒
     var n = new Notification(r.sender_name, { body: body, tag:r.id });
     n.onclick = function(){ window.focus(); resetUnread(); };
@@ -614,7 +651,8 @@ function sendText(){
   var id=cmid();
   var payload={type:'chat.send', text:t, clientMsgId:id};
   if(replyTarget){ payload.reply={id:replyTarget.id,name:replyTarget.name,preview:replyTarget.preview,kind:replyTarget.kind,ts:replyTarget.ts}; clearReply(); }
-  var p={cmid:id, kind:'text', text:t, at:Date.now(), status:'sending'};
+  if(pmTo) payload.to=pmTo.id; // v1.18.0 私聊定向
+  var p={cmid:id, kind:'text', text:t, at:Date.now(), status:'sending', to:pmTo?pmTo.id:null};
   p.timer=setTimeout(function(){ markFailed(id); }, 10000);
   pendingMsgs.push(p);
   renderPendingMsgs(); scrollBottom();
@@ -751,7 +789,7 @@ async function jumpToMessage(id, ts){
   var el=msgsEl.querySelector('[data-row="'+cssEsc(id)+'"]');
   if(!el && ts){
     try{
-      var r=await fetch('/api/chat/history?before='+(Number(ts)+1)+'&limit=200');
+      var r=await fetch('/api/chat/history?before='+(Number(ts)+1)+'&limit=200&self='+encodeURIComponent(selfId));
       var page=await r.json();
       if(page && page.length){ history=page; renderAll(); el=msgsEl.querySelector('[data-row="'+cssEsc(id)+'"]'); }
     }catch(e){}
@@ -783,7 +821,7 @@ $('searchInput').addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.
 async function doSearch(q){
   if(!q) return;
   try{
-    var r=await fetch('/api/chat/search?q='+encodeURIComponent(q));
+    var r=await fetch('/api/chat/search?q='+encodeURIComponent(q)+'&self='+encodeURIComponent(selfId));
     var list=await r.json();
     renderSearchResults(Array.isArray(list)?list:[], q);
   }catch(e){}

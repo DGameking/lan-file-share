@@ -656,6 +656,7 @@
             <label class="field">接收配额（GB，超出按最旧文件自动清理）<input type="number" min="0.5" step="0.5" style="width:100px" :value="store.settings.dropQuotaGB" @change="onText($event,'dropQuotaGB')" /></label>
             <label class="field">投送 PIN（对方投送给本机时需提供；本机投送给对方时自动携带）<input type="text" :value="store.settings.dropPin" @change="onText($event,'dropPin')" style="width:160px" placeholder="留空不启用" /></label>
             <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.upnp !== false" @change="onCheck($event,'upnp')" /> UPnP 自动端口映射（路由器支持时跨网段可直连满速传输；失败自动走会合点中继）</label>
+            <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.localsend !== false" @change="onCheck($event,'localsend')" /> LocalSend 互通（与 LocalSend 官方客户端互相发现、互传文件；切换后重启生效）</label>
             <label class="field">设备别名（对端看到的友好名称，留空用主机名）<input type="text" :value="store.settings.deviceAlias" @change="onText($event,'deviceAlias')" style="width:180px" placeholder="例：书房台式机" /></label>
             <label class="field">设备类型<select :value="store.settings.deviceType" @change="onText($event,'deviceType')" style="width:130px"><option value="">自动（按系统推断）</option><option value="pc">台式机</option><option value="laptop">笔记本</option><option value="phone">手机/平板</option><option value="nas">NAS/服务器</option></select></label>
             <label class="field">跨网段会合点（中心端 IP:端口，逗号分隔；填光猫层 NAS 地址即可打通双路由器不同网段）<input type="text" :value="store.settings.rendezvous" @change="onText($event,'rendezvous')" placeholder="例：192.168.10.5:8080" /></label>
@@ -845,11 +846,45 @@
       }
 
       function sendToDevice(d, files) {
+        // v1.19.0：LocalSend 互通设备走专属通道（主进程代发，自签 HTTPS）
+        if (d.via === 'localsend') {
+          sendViaLocalSend(d, files);
+          return;
+        }
         for (const f of files) {
           const t = reactive({ key: ++seq, name: f.name, size: f.size, pct: 0, to: d.device_name, status: 'uploading' });
           transfers.value.unshift(t);
           if (transfers.value.length > 30) transfers.value.pop();
           uploadOne(d, f, t);
+        }
+      }
+
+      // LocalSend 设备投送：逐文件经主进程 prepare→upload
+      async function sendViaLocalSend(d, files) {
+        for (const f of files) {
+          const t = reactive({ key: ++seq, name: f.name, size: f.size, pct: 50, to: d.device_name + '（LocalSend）', status: 'uploading' });
+          transfers.value.unshift(t);
+          if (transfers.value.length > 30) transfers.value.pop();
+          try {
+            const r = await api.invoke('localsend:send', {
+              host: d.host,
+              port: d.port || 53317,
+              protocol: d.ls_protocol || 'https',
+              files: [{ path: f.path || '', name: f.name, size: f.size, mime: f.type || '' }],
+            });
+            if (r && r.ok) {
+              t.pct = 100;
+              t.status = 'done';
+            } else {
+              t.status = 'failed';
+              t.error = (r && r.error) || '发送失败';
+              toast(`向「${d.device_name}」投送失败：${t.error}`, 'warn');
+            }
+          } catch (e) {
+            t.status = 'failed';
+            t.error = e.message;
+            toast(`向「${d.device_name}」投送失败：${e.message}`, 'warn');
+          }
         }
       }
 
@@ -1166,7 +1201,7 @@
               <div class="dc-head">
                 <span class="dc-avatar">{{ (d.device_name || '?').slice(0,1).toUpperCase() }}</span>
                 <div class="dc-info">
-                  <div class="dc-name">{{ d.device_name }}</div>
+                  <div class="dc-name">{{ d.device_name }} <span v-if="d.via === 'localsend'" class="tag blue" title="LocalSend 互通设备">LS</span></div>
                   <div class="dc-os">{{ d.os || '-' }} · {{ d.host }}</div>
                 </div>
                 <span class="tag green">在线</span>
@@ -1174,7 +1209,7 @@
               <div class="dc-actions">
                 <button class="btn sm ghost" @click="sendClip(d)">📋 投送剪贴板</button>
               </div>
-              <div class="dc-hint">拖放文件到此处发送</div>
+              <div class="dc-hint">{{ d.via === 'localsend' ? '拖放文件（经 LocalSend 协议发送）' : '拖放文件到此处发送' }}</div>
             </div>
           </div>
         </div>
@@ -1252,23 +1287,67 @@
         // 兜底轮询：事件推送之外，每 5 秒对齐一次全量快照，保证信息始终统一
         setInterval(() => refresh().catch(() => {}), 5000);
         api.on('nav', (t) => { if (t) tab.value = t; }); // 托盘/全局快捷键跳转
-        api.on('devices', (list) => (store.devices = list));
+        // v1.18.0 通知中心：设备上下线（按在线状态变化去重）
+        let prevOnline = null; // Map<deviceId, bool>
+        api.on('devices', (list) => {
+          const arr = Array.isArray(list) ? list : [];
+          const key = (d) => d.deviceId || d.device_id || d.id || d.deviceName;
+          const online = (d) => d.isOnline === true || d.is_online === 1 || d.is_online === true || d.online === true;
+          const now = new Map();
+          arr.forEach((d) => now.set(String(key(d)), online(d)));
+          if (prevOnline) {
+            now.forEach((on, k) => {
+              const was = prevOnline.get(k);
+              if (was === undefined || was === on) return;
+              const d = arr.find((x) => String(key(x)) === k) || {};
+              pushNotif(on ? '🟢' : '⚪', on ? '设备上线' : '设备离线', d.deviceName || d.name || k, 'devices');
+            });
+          }
+          prevOnline = now;
+          store.devices = arr;
+        });
         api.on('shares', (list) => (store.shares = list));
         api.on('settings', (s) => { store.settings = s; applyTheme(s && s.theme); });
         api.on('settings', (s) => (store.settings = s));
         api.on('stats', (s) => (store.stats = s));
         api.on('ready', (snap) => { if (snap) Object.assign(store, snap); });
         api.on('logs', (entry) => { store.logs.unshift(entry); if (store.logs.length > 300) store.logs.pop(); });
-        api.on('pairing-request', (d) => toast('收到来自「' + (d.device_name || '未知设备') + '」的连接请求', 'ok'));
+        api.on('pairing-request', (d) => { pushNotif('🤝', '配对请求', '来自「' + (d.device_name || '未知设备') + '」的连接请求', 'devices'); toast('收到来自「' + (d.device_name || '未知设备') + '」的连接请求', 'ok'); });
         api.on('warn', (m) => toast(String(m), 'warn'));
+        // v1.18.0 通知中心事件源：投送接收 / 剪贴板同步
+        api.on('drop.incoming', (p) => {
+          const names = (p.files || []).map((f) => f.name).join('、');
+          pushNotif('📥', '收到投送', '「' + (p.from || '未知设备') + '」投送了 ' + (p.files || []).length + ' 个文件：' + names, 'drop');
+        });
+        api.on('clip-incoming', (p) => pushNotif('📋', '剪贴板同步', '来自「' + (p.deviceName || '其他设备') + '」的文本已写入本机剪贴板', null));
       });
+
+      // ---- 通知中心状态（v1.18.0） ----
+      const notifs = ref([]);
+      const notifOpen = ref(false);
+      const notifUnread = ref(0);
+      function pushNotif(ic, title, desc, nav) {
+        notifs.value.unshift({ id: Date.now() + Math.random(), ic, title, desc, nav, ts: Date.now() });
+        if (notifs.value.length > 50) notifs.value.length = 50;
+        if (!notifOpen.value) notifUnread.value++;
+      }
+      function toggleNotif() {
+        notifOpen.value = !notifOpen.value;
+        if (notifOpen.value) notifUnread.value = 0;
+      }
+      function clearNotifs() { notifs.value = []; notifOpen.value = false; }
+      function openNotif(n) {
+        notifOpen.value = false;
+        notifUnread.value = 0;
+        if (n && n.nav) setTab(n.nav);
+      }
 
       const selfText = computed(() => (store.self.deviceName ? store.self.deviceName + ' · ' + (store.self.host || '') + ':' + (store.self.port || '') : '加载中…'));
 
       function winMin() { window.lan.minimize(); }
       function winClose() { window.lan.toggleVisible(); }
 
-      return { tab, navs, setTab, store, selfText, winMin, winClose };
+      return { tab, navs, setTab, store, selfText, winMin, winClose, notifs, notifOpen, notifUnread, toggleNotif, clearNotifs, openNotif };
     },
     template: `
       <div>
@@ -1276,6 +1355,18 @@
           <span class="title">局域网文件共享</span>
           <span class="self">本机：<b>{{ selfText }}</b></span>
           <span class="spacer"></span>
+          <div class="bell-wrap">
+            <button class="winbtn bell" @click="toggleNotif" title="通知中心">🔔<span v-if="notifUnread" class="badge">{{ notifUnread > 99 ? '99+' : notifUnread }}</span></button>
+            <div v-if="notifOpen" class="notif-panel">
+              <div class="n-head"><b>通知中心</b><span class="sp"></span><button class="n-clear" @click="clearNotifs">清空</button></div>
+              <div v-if="!notifs.length" class="n-empty">暂无通知</div>
+              <div v-for="n in notifs" :key="n.id" class="n-item" @click="openNotif(n)">
+                <span class="n-ic">{{ n.ic }}</span>
+                <div class="n-body"><div class="n-title">{{ n.title }}</div><div class="n-desc">{{ n.desc }}</div></div>
+                <span class="n-ts">{{ fmtTime(n.ts) }}</span>
+              </div>
+            </div>
+          </div>
           <button class="winbtn" @click="winMin" title="最小化">—</button>
           <button class="winbtn" @click="winClose" title="隐藏到托盘">▢</button>
         </div>

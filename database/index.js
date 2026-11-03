@@ -46,6 +46,9 @@ class DB {
       if (!cols('chat_messages').includes('reply_meta')) {
         this.db.run('ALTER TABLE chat_messages ADD COLUMN reply_meta TEXT');
       }
+      if (!cols('chat_messages').includes('to_id')) {
+        this.db.run('ALTER TABLE chat_messages ADD COLUMN to_id TEXT');
+      }
     } catch (e) {}
   }
 
@@ -229,24 +232,47 @@ class DB {
   /* ---------------- 会话聊天 ---------------- */
   addChatMessage(m) {
     this._run(
-      'INSERT INTO chat_messages (id,ts,sender_id,sender_name,kind,text,file_meta,reply_meta) VALUES (?,?,?,?,?,?,?,?) ' +
+      'INSERT INTO chat_messages (id,ts,sender_id,sender_name,kind,text,file_meta,reply_meta,to_id) VALUES (?,?,?,?,?,?,?,?,?) ' +
         'ON CONFLICT(id) DO NOTHING',
-      [m.id, m.ts, m.sender_id, m.sender_name, m.kind || 'text', m.text || null, m.file_meta || null, m.reply_meta || null]
+      [m.id, m.ts, m.sender_id, m.sender_name, m.kind || 'text', m.text || null, m.file_meta || null, m.reply_meta || null, m.to_id || null]
     );
   }
-  /** 会话消息搜索（v1.17.0）：文本内容 + 文件名；按时间倒序取最新 limit 条后正序返回 */
-  searchChatMessages(q, limit = 50) {
+  /** 会话消息搜索（v1.17.0）：文本内容 + 文件名；v1.18.0 起过滤私聊可见性；倒序取最新 limit 条后正序返回 */
+  searchChatMessages(q, limit = 50, selfId = null) {
     const kw = String(q || '').trim();
     if (!kw) return [];
     const esc = kw.replace(/[\\%_]/g, (c) => '\\' + c);
     const like = `%${esc}%`;
+    if (selfId) {
+      return this._query(
+        "SELECT * FROM chat_messages WHERE ((kind='text' AND text LIKE ? ESCAPE '\\') OR (kind='file' AND file_meta LIKE ? ESCAPE '\\')) " +
+          'AND (to_id IS NULL OR to_id = @self OR sender_id = @self) ORDER BY ts DESC LIMIT ?',
+        [like, like, selfId, limit]
+      ).reverse();
+    }
     return this._query(
       "SELECT * FROM chat_messages WHERE (kind='text' AND text LIKE ? ESCAPE '\\') OR (kind='file' AND file_meta LIKE ? ESCAPE '\\') " +
         'ORDER BY ts DESC LIMIT ?',
       [like, like, limit]
     ).reverse();
   }
-  listChatMessages(limit = 200, beforeTs = null) {
+  /**
+   * 会话历史（v1.18.0 起支持私聊过滤）：
+   * selfId 传入时，只返回「群聊消息 + 我发出的私聊 + 发给我的私聊」
+   */
+  listChatMessages(limit = 200, beforeTs = null, selfId = null) {
+    if (selfId) {
+      if (beforeTs) {
+        return this._query(
+          'SELECT * FROM chat_messages WHERE ts < ? AND (to_id IS NULL OR to_id = @self OR sender_id = @self) ORDER BY ts DESC LIMIT ?',
+          [beforeTs, limit, selfId]
+        ).reverse();
+      }
+      return this._query(
+        'SELECT * FROM chat_messages WHERE (to_id IS NULL OR to_id = @self OR sender_id = @self) ORDER BY ts DESC LIMIT ?',
+        [selfId, limit]
+      ).reverse();
+    }
     if (beforeTs) {
       return this._query(
         'SELECT * FROM chat_messages WHERE ts < ? ORDER BY ts DESC LIMIT ?',
