@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS devices (
     remark        TEXT,
     is_trusted    INTEGER DEFAULT 0,
     is_blacklisted INTEGER DEFAULT 0,
+    starred       INTEGER DEFAULT 0,
     first_seen    INTEGER NOT NULL,
     last_seen     INTEGER NOT NULL,
     is_online     INTEGER DEFAULT 0

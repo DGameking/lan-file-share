@@ -39,6 +39,7 @@ class DeviceManager extends EventEmitter {
       direct_port: info.directPort != null ? info.directPort : (existing ? existing.direct_port : null),
       via: info.via != null ? info.via : (existing ? existing.via : ''),
       ls_protocol: info.lsProtocol || (existing ? existing.ls_protocol : null),
+      starred: info.starred != null ? (info.starred ? 1 : 0) : existing ? (existing.starred ? 1 : 0) : 0,
     };
     this.devices.set(merged.device_id, merged);
     if (!wasOnline) this.emit('online', merged);
@@ -81,12 +82,26 @@ class DeviceManager extends EventEmitter {
     this.emit('update', this.list());
   }
 
+  /** 收藏/取消收藏（v1.20.0 收藏夹置顶） */
+  setStarred(id, starred) {
+    const d = this.devices.get(id);
+    if (!d) return false;
+    d.starred = starred ? 1 : 0;
+    this.emit('update', this.list());
+    return true;
+  }
+
   get(id) {
     return this.devices.get(id);
   }
 
   list() {
-    return [...this.devices.values()];
+    // 收藏设备置顶，其余按在线优先 + 名称排序
+    return [...this.devices.values()].sort((a, b) => {
+      if ((b.starred ? 1 : 0) !== (a.starred ? 1 : 0)) return (b.starred ? 1 : 0) - (a.starred ? 1 : 0);
+      if ((b.is_online ? 1 : 0) !== (a.is_online ? 1 : 0)) return (b.is_online ? 1 : 0) - (a.is_online ? 1 : 0);
+      return String(a.device_name || '').localeCompare(String(b.device_name || ''), 'zh-CN');
+    });
   }
 
   /** 从持久化数据恢复（启动加载已信任/已拉黑设备） */
@@ -105,6 +120,7 @@ class DeviceManager extends EventEmitter {
         remark: r.remark,
         is_trusted: r.is_trusted,
         is_blacklisted: r.is_blacklisted,
+        starred: r.starred ? 1 : 0,
         is_online: false,
         last_seen: r.last_seen,
       });

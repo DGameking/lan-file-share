@@ -8,12 +8,13 @@ const path = require('path');
  * 传入的 callbacks 由 main 提供，避免循环依赖。
  */
 class TrayManager {
-  constructor({ onShow, onHide, onQuit, onOpenHome, onQuickDrop }) {
+  constructor({ onShow, onHide, onQuit, onOpenHome, onQuickDrop, onChat }) {
     this.onShow = onShow;
     this.onHide = onHide;
     this.onQuit = onQuit;
     this.onOpenHome = onOpenHome;
     this.onQuickDrop = onQuickDrop;
+    this.onChat = onChat;
     this.tray = null;
   }
 
@@ -39,6 +40,7 @@ class TrayManager {
 
     const menu = Menu.buildFromTemplate([
       { label: '快速投送 (Alt+Shift+D)', click: () => this.onQuickDrop && this.onQuickDrop() },
+      { label: '会话气泡', click: () => this.onChat && this.onChat() },
       { label: '打开主界面', click: () => this.onShow && this.onShow() },
       { label: '隐藏到托盘', click: () => this.onHide && this.onHide() },
       { type: 'separator' },

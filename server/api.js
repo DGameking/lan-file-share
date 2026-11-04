@@ -82,6 +82,12 @@ function registerApi(ctx) {
     res.json({ ok: true });
   });
 
+  // 收藏/取消收藏（v1.20.0 收藏夹置顶）
+  app.post('/api/devices/:id/star', (req, res) => {
+    const ok = ctx.starDevice(req.params.id, !!(req.body && req.body.starred));
+    res.json({ ok });
+  });
+
   app.get('/api/devices/:id/ping', async (req, res) => {
     const ms = await ctx.pingDevice(req.params.id);
     res.json({ ms });

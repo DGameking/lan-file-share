@@ -251,7 +251,8 @@ async function run(engine) {
       log('LocalSend 互通', true, '已在设置中关闭');
     } else if (engine.localsend) {
       const n = engine.localsend.discovered.size;
-      log('LocalSend 互通', true, `已启动（${engine.localsend.protocol.toUpperCase()} :${engine.localsend.port}）${n ? `，已发现 ${n} 台 LocalSend 设备` : '，尚未发现 LocalSend 设备（对方需在同一局域网）'}`);
+      const o = engine.localsend.offers ? engine.localsend.offers.size : 0;
+      log('LocalSend 互通', true, `已启动（${engine.localsend.protocol.toUpperCase()} :${engine.localsend.port}）${n ? `，已发现 ${n} 台 LocalSend 设备` : '，尚未发现 LocalSend 设备（对方需在同一局域网）'}${o ? `，${o} 个拉取链接进行中` : ''}`);
     } else {
       log('LocalSend 互通', false, '网关未运行（可能端口被占用，查看运行日志）');
     }

@@ -680,6 +680,14 @@ class LanFileShare extends require('events').EventEmitter {
     this.broadcast('devices', this.deviceManager.list());
   }
 
+  /** 收藏/取消收藏设备（v1.20.0 收藏夹置顶） */
+  starDevice(id, starred) {
+    const ok = this.deviceManager.setStarred(id, starred);
+    if (ok) this.db.setDeviceStarred(id, starred);
+    this.broadcast('devices', this.deviceManager.list());
+    return ok;
+  }
+
   async pingDevice(id) {
     const d = this.deviceManager.get(id);
     if (!d) return -1;
@@ -901,6 +909,7 @@ class LanFileShare extends require('events').EventEmitter {
       deviceType: this.settings.deviceType || (this.osType === 'android' ? 'phone' : this.osType === 'darwin' ? 'laptop' : 'pc'),
       alias: String(this.settings.deviceAlias || '').trim().slice(0, 40),
       wanPort: (this.upnpInfo && (this.upnpInfo.mapped || []).find((m) => m.protocol === 'TCP') || {}).port || null,
+      useHttps: !!this.useHttps,
       version: this.version,
       fingerprint: this.fingerprint,
       sharedCount: this.enabledShareCount(),

@@ -49,6 +49,9 @@ class DB {
       if (!cols('chat_messages').includes('to_id')) {
         this.db.run('ALTER TABLE chat_messages ADD COLUMN to_id TEXT');
       }
+      if (!cols('devices').includes('starred')) {
+        this.db.run('ALTER TABLE devices ADD COLUMN starred INTEGER DEFAULT 0');
+      }
     } catch (e) {}
   }
 
@@ -161,6 +164,9 @@ class DB {
   }
   setTrust(id, trusted) {
     this._run('UPDATE devices SET is_trusted=@t WHERE device_id=@id', { id, t: trusted ? 1 : 0 });
+  }
+  setDeviceStarred(id, starred) {
+    this._run('UPDATE devices SET starred=@s WHERE device_id=@id', { id, s: starred ? 1 : 0 });
   }
   setBlacklist(id, black) {
     this._run('UPDATE devices SET is_blacklisted=@b WHERE device_id=@id', { id, b: black ? 1 : 0 });

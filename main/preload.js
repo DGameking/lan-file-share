@@ -38,6 +38,10 @@ const API = {
   setTheme(mode) {
     ipcRenderer.send('app:setTheme', mode);
   },
+  // v1.20.0 打开会话气泡窗口
+  openChat() {
+    ipcRenderer.send('chat:open');
+  },
 };
 
 contextBridge.exposeInMainWorld('lan', API);

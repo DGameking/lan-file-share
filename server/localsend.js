@@ -42,6 +42,7 @@ class LocalSendGateway {
     this.engine = engine;
     this.sessions = new Map(); // sessionId -> {status, from, ip, files:Map, ts}
     this.discovered = new Map(); // fingerprint -> {alias,host,port,protocol,deviceModel,deviceType,lastSeen}
+    this.offers = new Map(); // sessionId -> {files:Map(fid->meta), pin, ts}（v1.20.0 拉取供给池）
     this.protocol = 'http';
     this.port = Number(engine.settings.localsendPort) || 53317;
     this.httpServer = null;
@@ -61,7 +62,7 @@ class LocalSendGateway {
       fingerprint: this.fingerprint || '',
       port: this.port,
       protocol: this.protocol,
-      download: false,
+      download: true, // v1.20.0 支持 prepare-download/download 拉取
     };
   }
 
@@ -234,6 +235,93 @@ class LocalSendGateway {
       }
       res.status(200).end();
     });
+
+    /* ---------------- v1.20.0 反向拉取（download API，本机作为提供方） ---------------- */
+
+    // 对方请求拉取：body.files 列出想要的文件（fid 需命中供给池），PIN 走 ?pin=
+    app.post('/api/localsend/v2/prepare-download', (req, res) => {
+      const body = req.body || {};
+      const files = body.files && typeof body.files === 'object' ? body.files : null;
+      const offer = this.offers.get(String(req.query.sessionId || body.sessionId || ''));
+      if (!offer) return res.status(404).json({ message: 'Unknown download session（会话不存在或已过期）' });
+      if (!files || !Object.keys(files).length) return res.status(204).end();
+      if (offer.pin && String(req.query.pin || '') !== String(offer.pin)) {
+        return res.status(401).json({ message: 'PIN required / invalid PIN' });
+      }
+      const tokens = {};
+      for (const fid of Object.keys(files)) {
+        const meta = offer.files.get(String(fid));
+        if (!meta) return res.status(404).json({ message: `File not found: ${String(fid).slice(0, 64)}` });
+        tokens[fid] = meta.token;
+      }
+      const ip = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+      engine.logger && engine.logger.info('localsend', `LocalSend 拉取请求：${ip} 请求 ${Object.keys(tokens).length} 个文件`, { sessionId: offer.id });
+      res.json({ sessionId: offer.id, files: tokens });
+    });
+
+    // 文件流下载（token 一次性校验即授权，不再重复验 PIN——prepare-download 已把关；流式发送）
+    app.get('/api/localsend/v2/download', (req, res) => {
+      const offer = this.offers.get(String(req.query.sessionId || ''));
+      if (!offer) return res.status(404).json({ message: 'Unknown download session' });
+      const meta = offer.files.get(String(req.query.fileId || ''));
+      if (!meta) return res.status(404).json({ message: 'File not found' });
+      if (meta.token !== String(req.query.token || '')) return res.status(403).json({ message: 'Invalid token' });
+      let stat = null;
+      try { stat = fs.statSync(meta.path); } catch (e) {}
+      if (!stat || !stat.isFile()) return res.status(404).json({ message: 'File missing' });
+      res.setHeader('Content-Type', meta.fileType || 'application/octet-stream');
+      res.setHeader('Content-Length', String(stat.size));
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(meta.fileName)}`);
+      const rs = fs.createReadStream(meta.path);
+      rs.on('error', () => { if (!res.headersSent) res.status(500).end(); else res.end(); });
+      rs.pipe(res);
+    });
+  }
+
+  /**
+   * v1.20.0 创建拉取供给：本机选定文件 → 生成 sessionId 与下载链接。
+   * LocalSend 官方客户端「打开链接」或浏览器直接访问均可拉取。
+   * @param {Array<{path,name,size,mime,sha256?}>} items
+   * @param {{pin?:string}} opts
+   * @returns {{sessionId, url, files:{fid:{fileName,size,fileType,sha256}}}}
+   */
+  createDownloadOffer(items, opts = {}) {
+    const id = shortId();
+    const files = new Map();
+    const declared = {};
+    for (const it of items || []) {
+      if (!it.path || !fs.existsSync(it.path)) continue;
+      const fid = shortId();
+      const sha = it.sha256 || this._sha256Sync(it.path);
+      const meta = {
+        id: fid,
+        fileName: it.name || path.basename(it.path),
+        size: it.size || fs.statSync(it.path).size,
+        fileType: it.mime || 'application/octet-stream',
+        sha256: sha,
+        token: shortId(),
+        path: it.path,
+      };
+      files.set(fid, meta);
+      declared[fid] = { id: fid, fileName: meta.fileName, size: meta.size, fileType: meta.fileType, sha256: sha };
+    }
+    if (!files.size) return null;
+    const pin = String(opts.pin || '').trim();
+    const offer = { id, files, pin, ts: Date.now() };
+    this.offers.set(id, offer);
+    const engine = this.engine;
+    const base = `${this.protocol}://${engine.localIp}:${this.port}`;
+    const url = `${base}/#/p?sessionId=${encodeURIComponent(id)}${pin ? '&pin=' + encodeURIComponent(pin) : ''}`;
+    engine.logger && engine.logger.info('localsend', `LocalSend 拉取链接已创建：${files.size} 个文件（TTL 10 分钟）`, { sessionId: id });
+    return { sessionId: id, url, files: declared };
+  }
+
+  _sha256Sync(p) {
+    try {
+      return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+    } catch (e) {
+      return null;
+    }
   }
 
   /** 会话内全部文件到齐 → 走本站收件通知与历史 */
@@ -406,6 +494,10 @@ class LocalSendGateway {
         for (const m of s.files.values()) if (m.path && !m.received) { try { fs.unlinkSync(m.path); } catch (e) {} }
         this.sessions.delete(id);
       }
+    }
+    // 拉取供给过期（10 分钟 TTL）
+    for (const [id, o] of this.offers) {
+      if (now - o.ts > LS_SESSION_TTL) this.offers.delete(id);
     }
     const dm = this.engine.deviceManager;
     for (const [fp, d] of this.discovered) {

@@ -369,6 +369,7 @@
 
       const sortedDevices = computed(() => {
         return [...store.devices].sort((a, b) => {
+          if ((b.starred ? 1 : 0) !== (a.starred ? 1 : 0)) return (b.starred ? 1 : 0) - (a.starred ? 1 : 0); // 收藏置顶（v1.20.0）
           if (a.is_online !== b.is_online) return a.is_online ? -1 : 1; // 在线优先
           if (a.is_blacklisted !== b.is_blacklisted) return a.is_blacklisted ? 1 : -1;
           return String(a.device_name || '').localeCompare(String(b.device_name || ''), 'zh');
@@ -382,6 +383,10 @@
       }
       async function trust(id, v) { await api.invoke('engine:trustDevice', id, v); }
       async function blacklist(id, v) { await api.invoke('engine:blacklistDevice', id, v); }
+      async function star(d) {
+        const r = await api.invoke('engine:starDevice', d.device_id, !d.starred);
+        if (r.ok) { d.starred = !d.starred ? 1 : 0; toast(d.starred ? '已收藏，将置顶显示' : '已取消收藏', 'ok'); }
+      }
       async function connect() {
         if (!host.value) return toast('请输入主机地址', 'warn');
         const r = await api.invoke('engine:connectManual', { host: host.value, port: port.value ? Number(port.value) : undefined });
@@ -404,7 +409,7 @@
         if (s) { copy(s); toast('识别码已复制，对方可通过它确认本机身份', 'ok'); }
       }
 
-      return { store, host, port, inviteCode, myInvite, ping, trust, blacklist, connect, discover, createInvite, joinInvite, copy,
+      return { store, host, port, inviteCode, myInvite, ping, trust, blacklist, star, connect, discover, createInvite, joinInvite, copy,
                fpFmt, sortedDevices, onlineCount, copyFp, typeIcon };
     },
     template: `
@@ -473,6 +478,8 @@
                 <span class="tag" :class="d.is_online ? 'green' : 'gray'">{{ d.is_online ? '在线' : '离线' }}</span>
                 <span class="tag blue" v-if="d.is_trusted">已信任</span>
                 <span class="tag red" v-if="d.is_blacklisted">已拉黑</span>
+                <span class="spacer" style="flex:1"></span>
+                <button class="btn sm ghost" :title="d.starred ? '取消收藏' : '收藏置顶'" @click="star(d)">{{ d.starred ? '★' : '☆' }}</button>
               </div>
               <div class="dc-actions">
                 <button class="btn sm ghost" @click="ping(d.device_id)">Ping</button>
@@ -805,15 +812,22 @@
       const chatUrl = computed(() => {
         const s = store.self;
         if (!s.host || !s.port) return '';
-        // 桌面端内嵌页以设备名+独立身份入会（与浏览器打开的会话页互不覆盖）
+        // 桌面端内嵌页以设备名+独立身份入会（与浏览器打开的会话页互不覆盖）；HTTPS 时同步协议
+        const proto = s.useHttps ? 'https' : 'http';
         const name = s.deviceName ? `&name=${encodeURIComponent(s.deviceName)}` : '';
-        return `http://${s.host}:${s.port}/chat?kind=desktop${name}`;
+        return `${proto}://${s.host}:${s.port}/chat?kind=desktop${name}`;
       });
       const loaded = ref(false);
-      return { chatUrl, loaded };
+      function openBubble() { if (window.lan && window.lan.openChat) window.lan.openChat(); }
+      return { chatUrl, loaded, openBubble };
     },
     template: `
       <div class="card" style="padding:0;overflow:hidden;height:calc(100vh - 96px);display:flex;flex-direction:column">
+        <div style="flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border)">
+          <span class="muted" style="font-size:12px">会话运行于本机服务，也可独立成窗常驻桌面</span>
+          <span style="flex:1"></span>
+          <button class="btn sm ghost" @click="openBubble">🫧 气泡窗口</button>
+        </div>
         <iframe
           v-if="chatUrl"
           :src="chatUrl"
@@ -1186,13 +1200,22 @@
         api.on('clip-incoming', (p) => toast(`已同步「${p.deviceName}」的剪贴板`, 'ok'));
       });
 
-      return { store, onlineDevices, dragDevice, dragAny, transfers, received, clipText, onDropDevice, onDragOver, onDragLeave, sendClip, openReceived, clearReceivedHistory, openRecvFile, saveRecvAs, delRecvFile };
+      // v1.20.0 LocalSend 拉取链接：选文件生成 URL，LS 设备/浏览器可下载
+      async function createLsOffer() {
+        const r = await api.invoke('localsend:createOffer', {});
+        if (!r.ok) { toast('生成失败：' + (r.error === 'no_valid_files' ? '没有可用文件' : r.error), 'warn'); return; }
+        if (!r.data) return; // 用户取消
+        try { await navigator.clipboard.writeText(r.data.url); } catch (e) {}
+        toast(`拉取链接已复制（${Object.keys(r.data.files).length} 个文件，10 分钟内有效）：${r.data.url}`, 'ok');
+      }
+
+      return { store, onlineDevices, dragDevice, dragAny, transfers, received, clipText, onDropDevice, onDragOver, onDragLeave, sendClip, openReceived, clearReceivedHistory, openRecvFile, saveRecvAs, delRecvFile, createLsOffer };
     },
     template: `
       <div>
         <div class="card drop-card">
-          <h3>🚀 快速投送</h3>
-          <div class="muted" style="margin-bottom:12px">把文件拖到下方设备卡片上即可直接发送，对方立即收到并弹出通知（无需共享文件夹）</div>
+          <h3>🚀 快速投送 <button class="btn sm ghost" style="float:right" @click="createLsOffer">🔗 LocalSend 拉取链接</button></h3>
+          <div class="muted" style="margin-bottom:12px">把文件拖到下方设备卡片上即可直接发送，对方立即收到并弹出通知（无需共享文件夹）；也可生成拉取链接让 LocalSend 设备来下载</div>
           <div v-if="onlineDevices.length === 0" class="empty">局域网中暂无其他在线设备 — 等待设备自动发现…</div>
           <div v-else class="device-grid">
             <div v-for="d in onlineDevices" :key="d.device_id" class="device-card"

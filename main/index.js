@@ -41,6 +41,7 @@ if (!gotLock) {
 }
 
 let mainWindow = null;
+let chatWindow = null; // v1.20.0 会话气泡窗口（单例）
 let tray = null;
 let engine = null;
 let willQuit = false;
@@ -99,6 +100,44 @@ function createWindow() {
   });
 }
 
+/**
+ * v1.20.0 会话气泡窗口：独立小窗加载本机 /chat?kind=desktop&window=1。
+ * 单例复用；HTTPS 自签证书仅对 127.0.0.1 放行（自有证书，无中间人风险）。
+ */
+function openChatWindow() {
+  if (chatWindow && !chatWindow.isDestroyed()) {
+    if (chatWindow.isMinimized()) chatWindow.restore();
+    chatWindow.show();
+    chatWindow.focus();
+    return;
+  }
+  if (!engine) return;
+  chatWindow = new BrowserWindow({
+    width: 460,
+    height: 700,
+    minWidth: 360,
+    minHeight: 480,
+    title: '局域网会话',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0f1115' : '#f3f5f9',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  // 本机自签证书放行（仅限本窗口 session）
+  chatWindow.webContents.session.setCertificateVerifyProc((req, cb) => {
+    const host = (req.hostname || '').replace(/^\[|\]$/g, '');
+    cb(host === '127.0.0.1' || host === '::1' || host === 'localhost' ? 0 : -2);
+  });
+  chatWindow.loadURL(`http${engine.useHttps ? 's' : ''}://127.0.0.1:${engine.httpPort}/chat?kind=desktop&window=1`);
+  chatWindow.on('closed', () => { chatWindow = null; });
+  chatWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    if (engine && engine.logger) engine.logger.warn('electron', '会话窗口加载失败', { code, desc, url });
+  });
+}
+
 // 主进程未捕获异常 → 运行日志（不中断应用）
 process.on('uncaughtException', (e) => {
   if (engine && engine.logger) engine.logger.error('electron', '主进程未捕获异常', String(e && e.stack || e));
@@ -153,6 +192,7 @@ function registerIpc() {
   h('engine:listDevices', () => engine.deviceManager.list());
   h('engine:trustDevice', (id, trusted) => engine.trustDevice(id, !!trusted));
   h('engine:blacklistDevice', (id, black) => engine.blacklistDevice(id, !!black));
+  h('engine:starDevice', (id, starred) => engine.starDevice(id, !!starred));
   h('engine:pingDevice', (id) => engine.pingDevice(id));
   h('engine:remoteSharesSnapshot', () => (engine.bridge ? engine.bridge.remoteShareList() : []));
   h('engine:refreshRemoteShares', () => ({ requested: engine.bridge ? engine.bridge.requestSharesAll() : 0 }));
@@ -211,6 +251,27 @@ function registerIpc() {
     try {
       fs.copyFileSync(p, res.filePath);
       return { ok: true, data: res.filePath };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+  // v1.20.0 LocalSend 拉取链接：选文件 → 生成 URL（对方 LS 客户端/浏览器可下载）
+  ipcMain.handle('localsend:createOffer', async (_e, opts = {}) => {
+    if (!engine || !engine.localsend) return { ok: false, error: 'LocalSend 网关未运行' };
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: '选择要分享给 LocalSend 设备的文件',
+      properties: ['openFile', 'multiSelections'],
+    });
+    if (res.canceled || !res.filePaths || !res.filePaths.length) return { ok: true, data: null };
+    const items = res.filePaths.map((p) => {
+      let size = 0;
+      try { size = fs.statSync(p).size; } catch (e) {}
+      return { path: p, name: path.basename(p), size, mime: '' };
+    });
+    try {
+      const offer = engine.localsend.createDownloadOffer(items, { pin: String(opts.pin || '') });
+      if (!offer) return { ok: false, error: 'no_valid_files' };
+      return { ok: true, data: offer };
     } catch (e) {
       return { ok: false, error: e.message };
     }
@@ -492,8 +553,12 @@ app.whenReady().then(async () => {
     onQuit: () => { willQuit = true; app.quit(); },
     onOpenHome: () => engine && shell.openExternal(`http${engine.useHttps ? 's' : ''}://${engine.localIp}:${engine.httpPort}`),
     onQuickDrop: () => showAt('drop'),
+    onChat: () => openChatWindow(),
   });
   tray.create();
+
+  // 渲染层也可以唤起会话气泡
+  ipcMain.on('chat:open', () => openChatWindow());
 
   app.on('second-instance', () => {
     if (mainWindow) { mainWindow.show(); mainWindow.focus(); }
