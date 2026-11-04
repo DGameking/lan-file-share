@@ -2,7 +2,7 @@
 
 /* 桌面客户端渲染层 — 根组件与应用装配 */
 (function () {
-  const { createApp, ref, onMounted, defineComponent } = Vue;
+  const { createApp, ref, onMounted, computed, defineComponent } = Vue;
   const { api, store, refresh, applyTheme, fmtTime, formatBytes, formatSpeed } = window.LfsCore;
   const { Dashboard, SharesView, DevicesView, SettingsView, LogsView, ChatView, DropView } = window.LfsViews;
 
