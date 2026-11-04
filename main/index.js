@@ -5,33 +5,15 @@ const path = require('path');
 const fs = require('fs');
 const LanFileShare = require('../server');
 const TrayManager = require('./tray');
+const { initGpuFallback } = require('./gpu');
+const { initChatWindow, openChatWindow, isChatWindowOpen } = require('./chat-window');
+const { initClipboardSync, startClipboardSync, onIncomingClip, clipState } = require('./clipboard-sync');
+const { mountWebdav, runCmd } = require('./webdav');
 
-// ---- GPU 容错（自动降级到软渲染）----
-// 现象：部分机器上 GPU 进程带沙箱启动即崩（exit_code=0xC0000005），渲染层无画面 → 主窗口全黑，
-//       连 --disable-gpu 都无效（GPU 进程仍带沙箱），必须 --no-sandbox --disable-gpu 才能软渲染。
-// 策略：① 曾触发过降级的机器（标记文件存在）或 LFS_DISABLE_GPU=1 → 启动即禁 GPU + 禁 GPU 沙箱；
-//       ② 运行中 GPU 进程连续崩溃 ≥3 次 → 写标记并自动重启进入降级模式（降级模式下不再重启，防循环）。
-const GPU_FLAG_FILE = path.join(app.getPath('userData'), 'gpu-fallback.flag');
-function gpuFallbackActive() {
-  return process.env.LFS_DISABLE_GPU === '1' || fs.existsSync(GPU_FLAG_FILE);
-}
-if (gpuFallbackActive()) {
-  app.commandLine.appendSwitch('disable-gpu');
-  app.commandLine.appendSwitch('no-sandbox');
-}
+initGpuFallback(() => engine);
+initChatWindow(() => engine);
+initClipboardSync({ getEngine: () => engine, getMainWindow: () => mainWindow });
 
-let gpuCrashCount = 0;
-app.on('child-process-gone', (_e, details) => {
-  if (!details || details.type !== 'GPU' || details.reason !== 'crashed') return;
-  if (gpuFallbackActive()) return; // 已降级仍崩（理论上不会）：只记日志不重启，防循环
-  gpuCrashCount++;
-  if (gpuCrashCount >= 3) {
-    try { fs.writeFileSync(GPU_FLAG_FILE, new Date().toISOString()); } catch (e) {}
-    try { if (engine && engine.logger) engine.logger.warn('electron', 'GPU 进程连续崩溃，已写入降级标记，重启进入软渲染模式'); } catch (e) {}
-    app.relaunch();
-    app.exit(0);
-  }
-});
 
 // 单实例锁，避免重复启动多个共享服务
 const gotLock = app.requestSingleInstanceLock();
@@ -41,7 +23,6 @@ if (!gotLock) {
 }
 
 let mainWindow = null;
-let chatWindow = null; // v1.20.0 会话气泡窗口（单例）
 let tray = null;
 let engine = null;
 let willQuit = false;
@@ -101,42 +82,6 @@ function createWindow() {
 }
 
 /**
- * v1.20.0 会话气泡窗口：独立小窗加载本机 /chat?kind=desktop&window=1。
- * 单例复用；HTTPS 自签证书仅对 127.0.0.1 放行（自有证书，无中间人风险）。
- */
-function openChatWindow() {
-  if (chatWindow && !chatWindow.isDestroyed()) {
-    if (chatWindow.isMinimized()) chatWindow.restore();
-    chatWindow.show();
-    chatWindow.focus();
-    return;
-  }
-  if (!engine) return;
-  chatWindow = new BrowserWindow({
-    width: 460,
-    height: 700,
-    minWidth: 360,
-    minHeight: 480,
-    title: '局域网会话',
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0f1115' : '#f3f5f9',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  // 本机自签证书放行（仅限本窗口 session）
-  chatWindow.webContents.session.setCertificateVerifyProc((req, cb) => {
-    const host = (req.hostname || '').replace(/^\[|\]$/g, '');
-    cb(host === '127.0.0.1' || host === '::1' || host === 'localhost' ? 0 : -2);
-  });
-  chatWindow.loadURL(`http${engine.useHttps ? 's' : ''}://127.0.0.1:${engine.httpPort}/chat?kind=desktop&window=1`);
-  chatWindow.on('closed', () => { chatWindow = null; });
-  chatWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
-    if (engine && engine.logger) engine.logger.warn('electron', '会话窗口加载失败', { code, desc, url });
-  });
-}
 
 // 主进程未捕获异常 → 运行日志（不中断应用）
 process.on('uncaughtException', (e) => {
@@ -366,118 +311,8 @@ function applyAutostart() {
 }
 
 /* ---------------- 剪贴板同步 ---------------- */
-const clipState = { last: '', timer: null };
-
-function startClipboardSync() {
-  if (clipState.timer) return;
-  clipState.timer = setInterval(() => {
-    try {
-      if (!engine || !engine.settings || !engine.settings.clipboardSync) return;
-      const text = clipboard.readText();
-      if (!text || text === clipState.last) return;
-      clipState.last = text;
-      engine.clipSync(text);
-    } catch (e) {}
-  }, 1500);
-}
-
-/** 收到其他设备的剪贴板 → 写入本机系统剪贴板并通知 */
-function onIncomingClip(payload) {
-  try {
-    if (!payload || typeof payload.text !== 'string' || !payload.text) return;
-    if (payload.deviceId === (engine && engine.deviceId)) return;
-    clipboard.writeText(payload.text);
-    clipState.last = payload.text;
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('engine:clip-incoming', { deviceName: payload.deviceName || '其他设备', text: payload.text });
-    }
-    try {
-      if (Notification.isSupported()) {
-        const n = new Notification({ title: '剪贴板已同步', body: `来自「${payload.deviceName || '其他设备'}」的内容已复制到本机` });
-        n.on('click', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
-        if (mainWindow && mainWindow.isVisible()) return; // 窗口可见时用 toast 即可
-        n.show();
-      }
-    } catch (e) {}
-  } catch (e) {}
-}
 
 /* ---------------- WebDAV 磁盘挂载（Windows） ---------------- */
-const { execFile } = require('child_process');
-
-function runCmd(cmd, args, timeoutMs = 30000) {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, { windowsHide: true, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
-      const out = String(stdout || '') + String(stderr || '');
-      if (err) reject(new Error(out.trim() || err.message));
-      else resolve(out);
-    });
-  });
-}
-
-/** 提权执行 PowerShell 命令（触发一次 UAC 授权弹窗） */
-function runElevated(psCommand) {
-  return new Promise((resolve, reject) => {
-    execFile(
-      'powershell.exe',
-      ['-NoProfile', '-Command', `Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-Command','${psCommand.replace(/'/g, "''")}'`],
-      { windowsHide: true, timeout: 120000 },
-      (err, stdout, stderr) => {
-        if (err) reject(new Error(String(stderr || err.message).trim()));
-        else resolve(String(stdout || ''));
-      }
-    );
-  });
-}
-
-async function mountWebdav({ url, password }) {
-  if (process.platform !== 'win32') {
-    return { ok: false, error: 'unsupported', hint: process.platform === 'darwin' ? 'macOS：访达 → 前往 → 连接服务器（⌘K）输入该地址' : 'Linux：文件管理器「连接到服务器」输入该地址' };
-  }
-  if (!/^http:\/\//.test(String(url || ''))) {
-    return { ok: false, error: 'bad_url', hint: '仅支持 http 地址挂载（HTTPS 自签证书会被 Windows 拒绝）' };
-  }
-
-  // 1. 确认 WebClient 服务在运行；未运行或 BasicAuthLevel 不为 2 时提权修复（一次 UAC）
-  let svc = '';
-  try { svc = await runCmd('sc', ['query', 'WebClient'], 15000); } catch (e) { svc = String(e.message || ''); }
-  const running = /RUNNING/.test(svc);
-  let authLevel = '';
-  try { authLevel = await runCmd('reg', ['query', 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\WebClient\\Parameters', '/v', 'BasicAuthLevel'], 15000); } catch (e) {}
-  const needFix = !running || !/0x2/.test(authLevel);
-  if (needFix) {
-    try {
-      await runElevated(
-        'reg add "HKLM\\SYSTEM\\CurrentControlSet\\Services\\WebClient\\Parameters" /v BasicAuthLevel /t REG_DWORD /d 2 /f; ' +
-        'sc config WebClient start= demand; ' +
-        'net start WebClient'
-      );
-    } catch (e) {
-      return { ok: false, error: 'elevation_denied', hint: '需要管理员授权启用 WebDAV 客户端（WebClient 服务）。可手动执行：services.msc 启动 WebClient，并将注册表 WebClient\\Parameters\\BasicAuthLevel 设为 2' };
-    }
-    try { svc = await runCmd('sc', ['query', 'WebClient'], 15000); } catch (e) {}
-    if (!/RUNNING/.test(svc)) {
-      return { ok: false, error: 'webclient_not_running', hint: 'WebClient 服务未能启动，请手动在服务中启动 WebClient 后重试' };
-    }
-  }
-
-  // 2. net use 挂载（* 让 Windows 自动挑空闲盘符）
-  const args = ['use', '*', url];
-  if (password) args.push('/user:lanfileshare', String(password));
-  args.push('/persistent:yes');
-  let out;
-  try {
-    out = await runCmd('net', args, 60000);
-  } catch (e) {
-    const msg = String(e.message || '');
-    if (/1326|密码|password/i.test(msg)) return { ok: false, error: 'auth_failed', hint: '密码错误：该共享设置了访问密码，请输入正确密码后重试' };
-    if (/1223|85|已在使用|local name/i.test(msg)) return { ok: false, error: 'already_mapped', hint: '该共享已被挂载，或盘符被占用' };
-    return { ok: false, error: 'net_use_failed', hint: msg.slice(0, 300) };
-  }
-  const m = out.match(/([A-Z]:)/);
-  const letter = m ? m[1] : null;
-  return { ok: true, data: { letter } };
-}
 
 async function boot() {
   const dataDir = app.isPackaged
@@ -526,7 +361,7 @@ async function boot() {
       if (!rec || chatNotifSeen.has(rec.id)) return;
       chatNotifSeen.add(rec.id);
       if (chatNotifSeen.size > 200) chatNotifSeen.delete(chatNotifSeen.values().next().value);
-      if (chatWindow && !chatWindow.isDestroyed()) return; // 气泡窗口在：页面内已有通知
+      if (isChatWindowOpen()) return; // 气泡窗口在：页面内已有通知
       let body = '';
       if (rec.kind === 'file') {
         try { body = '[文件] ' + JSON.parse(rec.file_meta || '[]').map((f) => f.name).join('、'); } catch (e) { body = '[文件]'; }

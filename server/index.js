@@ -71,6 +71,7 @@ class LanFileShare extends require('events').EventEmitter {
 
     // 共享目录以数据库为单一数据源（v1.21.1 重构：移除冗余内存 Map，杜绝双源漂移）
     this.deviceManager = new DeviceManager();
+    this._peerDbSyncAt = new Map(); // 心跳写库降噪：各设备最近一次落库时间
     this.pairing = new PairingManager();
     this.bridge = null;
     this.receivedDir = null;
@@ -507,8 +508,15 @@ class LanFileShare extends require('events').EventEmitter {
     if (existing && existing.is_blacklisted) return;
 
     const dev = this.deviceManager.upsert(info);
-    this.db.upsertDevice(dev);
-    this.db.setDeviceOnline(info.deviceId, true);
+    // 心跳写库降噪：内容无变化时跳过整行 UPDATE（last_seen 以内存为准，60s 兜底刷新一次）
+    const SYNC_FLOOR = 60 * 1000;
+    const tracked = ['device_name', 'os', 'device_type', 'alias', 'host', 'port', 'version', 'fingerprint', 'via', 'ls_protocol'];
+    const unchanged = existing && existing.is_online &&
+      tracked.every((k) => String(existing[k] ?? '') === String(dev[k] ?? ''));
+    if (!unchanged || Date.now() - (this._peerDbSyncAt.get(info.deviceId) || 0) > SYNC_FLOOR) {
+      this.db.upsertDevice(dev); // 已含 is_online，无需再单独 setDeviceOnline
+      this._peerDbSyncAt.set(info.deviceId, Date.now());
+    }
     // 广播由 deviceManager 'update' 事件统一触发（_wireDeviceManager），此处不再手动发
 
     if (!dev.is_trusted && !dev.is_blacklisted && this.settings.firstConnectConfirm && !this.settings.autoTrust) {
@@ -1094,7 +1102,7 @@ class LanFileShare extends require('events').EventEmitter {
       this.wss.close();
     }
     if (this.server) await new Promise((r) => this.server.close(() => r()));
-    if (this.db) this.db.close();
+    if (this.db) { this.db.flush(); this.db.close(); }
     if (this.logger) this.logger.stop();
   }
 }

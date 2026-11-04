@@ -39,7 +39,8 @@ class DB {
     this._migrate();
   }
 
-  /** 轻量迁移：为旧库补齐后加的列（CREATE TABLE IF NOT EXISTS 不会更新已存在的表） */
+  /** 轻量迁移：为旧库补齐后加的列（CREATE TABLE IF NOT EXISTS 不会更新已存在的表）。
+   *  迁移失败直接抛出拒启——带缺失列运行会让后续写入静默丢数据，比启动失败更糟。 */
   _migrate() {
     const cols = (table) => this._query(`PRAGMA table_info(${table})`).map((r) => r.name);
     try {
@@ -55,7 +56,11 @@ class DB {
       if (!cols('devices').includes('alias')) {
         this.db.run('ALTER TABLE devices ADD COLUMN alias TEXT');
       }
-    } catch (e) {}
+    } catch (e) {
+      const msg = `数据库迁移失败（${this.dbPath}）: ${e.message}`;
+      console.error('[database]', msg);
+      throw new Error(msg);
+    }
   }
 
   _persist() {
@@ -64,6 +69,26 @@ class DB {
     } catch (e) {
       /* ignore */
     }
+  }
+
+  /** 防抖落盘：高频写入（心跳/统计）合并为一次文件写，停顿时自动兜底。
+   *  此前每条 UPDATE 都全量导出 SQLite 写盘，设备心跳链路每 3 秒写两次整库文件。 */
+  _schedulePersist() {
+    if (this._persistTimer) return;
+    this._persistTimer = setTimeout(() => {
+      this._persistTimer = null;
+      this._persist();
+    }, 300);
+    if (this._persistTimer.unref) this._persistTimer.unref();
+  }
+
+  /** 立即落盘（退出前调用，防抖窗口内的变更不丢） */
+  flush() {
+    if (this._persistTimer) {
+      clearTimeout(this._persistTimer);
+      this._persistTimer = null;
+    }
+    this._persist();
   }
 
   _norm(params) {
@@ -93,7 +118,7 @@ class DB {
 
   _run(sql, params) {
     this.db.run(sql, this._norm(params));
-    this._persist();
+    this._schedulePersist();
   }
 
   /* ---------------- 共享文件夹 ---------------- */

@@ -43,7 +43,11 @@ class DeviceManager extends EventEmitter {
     };
     this.devices.set(merged.device_id, merged);
     if (!wasOnline) this.emit('online', merged);
-    this.emit('update', this.list());
+    // 心跳降噪：仅当对外可见字段发生变化（或刚上线）才广播，避免每 3 秒全量刷所有客户端
+    const tracked = ['device_name', 'os', 'device_type', 'alias', 'host', 'port', 'version', 'fingerprint',
+      'via', 'ls_protocol', 'relay', 'relay_hub', 'direct_port', 'latency', 'is_trusted', 'is_blacklisted', 'starred'];
+    const changed = !existing || !wasOnline || tracked.some((k) => String(existing[k] ?? '') !== String(merged[k] ?? ''));
+    if (changed) this.emit('update', this.list());
     return merged;
   }
 
