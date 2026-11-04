@@ -94,10 +94,27 @@ class LocalSendGateway {
 
     this.httpServer = (this.protocol === 'https' ? https : http)
       .createServer(tls ? { key: tls.key, cert: tls.cert } : undefined, app);
-    await new Promise((resolve, reject) => {
-      this.httpServer.once('error', reject);
-      this.httpServer.listen(this.port, () => resolve());
-    });
+    // 端口冲突自动降级：同机多实例（如安装版+便携版并存）时依次让位尝试，
+    // 换端口后仍可通过组播 announce 的 port 字段被官方客户端发现，不影响互通
+    const MAX_PORT_TRIES = 6;
+    await (async () => {
+      for (let i = 0; ; i++) {
+        try {
+          await new Promise((resolve, reject) => {
+            this.httpServer.once('error', reject);
+            this.httpServer.listen(this.port, () => resolve());
+          });
+          return;
+        } catch (e) {
+          if (e.code !== 'EADDRINUSE' || i >= MAX_PORT_TRIES) throw e;
+          engine.logger && engine.logger.warn('localsend', `端口 ${this.port} 被占用（同机可能已运行本应用），自动改用 ${this.port + 1}`, {});
+          try { this.httpServer.close(); } catch (e2) {}
+          this.port += 1;
+          this.httpServer = (this.protocol === 'https' ? https : http)
+            .createServer(tls ? { key: tls.key, cert: tls.cert } : undefined, app); // 路由已挂在 app 上，无需重挂
+        }
+      }
+    })();
     engine.logger && engine.logger.info('localsend', `LocalSend 兼容服务已启动（${this.protocol.toUpperCase()} :${this.port}）`);
 
     this._startUdp();

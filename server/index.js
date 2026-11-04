@@ -69,7 +69,7 @@ class LanFileShare extends require('events').EventEmitter {
     this.keyPair = null;
     this.fingerprint = null;
 
-    this.shares = new Map();
+    // 共享目录以数据库为单一数据源（v1.21.1 重构：移除冗余内存 Map，杜绝双源漂移）
     this.deviceManager = new DeviceManager();
     this.pairing = new PairingManager();
     this.bridge = null;
@@ -176,7 +176,6 @@ class LanFileShare extends require('events').EventEmitter {
     this.useHttps = !!this.settings.https;
 
     // 恢复共享与设备
-    for (const r of this.db.listShares()) this.shares.set(r.id, r);
     this.deviceManager.hydrate(this.db.listDevices());
 
     // 共享页面模板
@@ -184,6 +183,12 @@ class LanFileShare extends require('events').EventEmitter {
       this._sharePageHtml = fs.readFileSync(path.join(__dirname, 'static', 'share.html'), 'utf8');
     } catch (e) {
       this._sharePageHtml = '<h1>共享页面模板缺失</h1>';
+    }
+    // 门户页模板（v1.21.1 从引擎类外置，init 时读入，动态部分运行时替换）
+    try {
+      this._portalHtml = fs.readFileSync(path.join(__dirname, 'static', 'portal.html'), 'utf8');
+    } catch (e) {
+      this._portalHtml = '';
     }
 
     this._wireDeviceManager();
@@ -399,9 +404,9 @@ class LanFileShare extends require('events').EventEmitter {
       host: this.localIp,
       port: this.httpPort,
       os: this.osType,
-      deviceType: this.settings.deviceType || (this.osType === 'android' ? 'phone' : this.osType === 'darwin' ? 'laptop' : 'pc'),
+      deviceType: this._inferredDeviceType(),
       alias: String(this.settings.deviceAlias || '').trim().slice(0, 40),
-      wanPort: (this.upnpInfo && (this.upnpInfo.mapped || []).find((m) => m.protocol === 'TCP') || {}).port || null,
+      wanPort: this._wanTcpPort(),
       version: this.version,
       fingerprint: this.fingerprint,
       sharedCount: this.enabledShareCount(),
@@ -504,13 +509,13 @@ class LanFileShare extends require('events').EventEmitter {
     const dev = this.deviceManager.upsert(info);
     this.db.upsertDevice(dev);
     this.db.setDeviceOnline(info.deviceId, true);
+    // 广播由 deviceManager 'update' 事件统一触发（_wireDeviceManager），此处不再手动发
 
     if (!dev.is_trusted && !dev.is_blacklisted && this.settings.firstConnectConfirm && !this.settings.autoTrust) {
       if (!this.pairing.isPending(info.deviceId)) {
         this.pairing.request(dev);
       }
     }
-    this.broadcast('devices', this.deviceManager.list());
   }
 
   /* ---------------- 共享管理 ---------------- */
@@ -545,7 +550,6 @@ class LanFileShare extends require('events').EventEmitter {
       speed_limit: body.speed_limit || 0,
       enabled: body.enabled != null ? (body.enabled ? 1 : 0) : 1,
     });
-    this.shares.set(id, share);
     this.broadcast('shares', this.listShares());
     this._relayShareCatalog();
     this.logEvent({ event_type: 'share_start', target: p, result: 'success' });
@@ -573,7 +577,6 @@ class LanFileShare extends require('events').EventEmitter {
     if (patch.speed_limit != null) update.speed_limit = patch.speed_limit;
     if (patch.enabled != null) update.enabled = patch.enabled ? 1 : 0;
     const saved = this.db.updateShare(id, update);
-    this.shares.set(id, saved);
     this.broadcast('shares', this.listShares());
     this._relayShareCatalog();
     this._refreshMdnsSharedCount();
@@ -582,7 +585,6 @@ class LanFileShare extends require('events').EventEmitter {
 
   removeShare(id) {
     this.db.removeShare(id);
-    this.shares.delete(id);
     this.broadcast('shares', this.listShares());
     this._relayShareCatalog();
     this._refreshMdnsSharedCount();
@@ -597,7 +599,7 @@ class LanFileShare extends require('events').EventEmitter {
   }
 
   enabledShareCount() {
-    return [...this.shares.values()].filter((s) => s.enabled).length;
+    return this.db.listShares().filter((s) => s.enabled).length;
   }
 
   /** 本机共享目录（对外广播用，不含路径等敏感信息） */
@@ -618,6 +620,7 @@ class LanFileShare extends require('events').EventEmitter {
     return this.bridge.remoteShareList();
   }
 
+  /** 共享数量变化 / 设备信息变化 → 重新发布 mDNS TXT（带 deviceType/alias，纯 mDNS 路径元数据不缺失） */
   _refreshMdnsSharedCount() {
     if (this.mdns && this.settings.mdns) {
       try {
@@ -626,6 +629,8 @@ class LanFileShare extends require('events').EventEmitter {
           port: this.httpPort,
           deviceId: this.deviceId,
           os: this.osType,
+          deviceType: this._inferredDeviceType(),
+          alias: String(this.settings.deviceAlias || '').trim().slice(0, 40),
           version: this.version,
           fingerprint: this.fingerprint,
           sharedCount: this.enabledShareCount(),
@@ -665,36 +670,47 @@ class LanFileShare extends require('events').EventEmitter {
     };
     const merged = this.deviceManager.upsert(dev);
     this.db.upsertDevice(merged);
-    this.broadcast('devices', this.deviceManager.list());
     return merged;
   }
 
+  /* ---------------- 设备操作（统一入口：内存表 + 持久化 + 广播由 'update' 事件统一触发） ---------------- */  _applyDeviceUpdate(id, change) {
+    const d = this.deviceManager.get(id);
+    if (!d) return false;
+    if (change.trusted !== undefined) {
+      this.deviceManager.setTrust(id, change.trusted);
+      this.db.setTrust(id, change.trusted);
+    }
+    if (change.black !== undefined) {
+      this.deviceManager.setBlacklist(id, change.black);
+      this.db.setBlacklist(id, change.black);
+    }
+    if (change.starred !== undefined) {
+      this.deviceManager.setStarred(id, change.starred);
+      this.db.setDeviceStarred(id, change.starred);
+    }
+    if (change.alias !== undefined) {
+      this.deviceManager.setAlias(id, change.alias);
+      this.db.setDeviceAlias(id, change.alias);
+    }
+    return true;
+  }
+
   trustDevice(id, trusted) {
-    this.deviceManager.setTrust(id, trusted);
-    this.db.setTrust(id, trusted);
-    this.broadcast('devices', this.deviceManager.list());
+    this._applyDeviceUpdate(id, { trusted });
   }
 
   blacklistDevice(id, black) {
-    this.deviceManager.setBlacklist(id, black);
-    this.db.setBlacklist(id, black);
-    this.broadcast('devices', this.deviceManager.list());
+    this._applyDeviceUpdate(id, { black });
   }
 
-  /** 收藏/取消收藏设备（v1.20.0 收藏夹置顶） */
+  /** 收藏/取消收藏设备（收藏夹置顶） */
   starDevice(id, starred) {
-    const ok = this.deviceManager.setStarred(id, starred);
-    if (ok) this.db.setDeviceStarred(id, starred);
-    this.broadcast('devices', this.deviceManager.list());
-    return ok;
+    return this._applyDeviceUpdate(id, { starred });
   }
 
-  /** 设置设备别名（v1.21.0 右键菜单；空串恢复原名，持久化到 devices.alias） */
+  /** 设置设备别名（空串恢复原名，持久化到 devices.alias） */
   setDeviceAlias(id, alias) {
-    const ok = this.deviceManager.setAlias(id, alias);
-    if (ok) this.db.setDeviceAlias(id, alias);
-    this.broadcast('devices', this.deviceManager.list());
-    return ok;
+    return this._applyDeviceUpdate(id, { alias: String(alias || '') });
   }
 
   async pingDevice(id) {
@@ -733,7 +749,12 @@ class LanFileShare extends require('events').EventEmitter {
     const before = { ...this.settings };
     this.settings = { ...this.settings, ...patch };
     this.db.setConfig('settings', JSON.stringify(this.settings));
+    this._applySettingsEffects(patch, before);
+    this.broadcast('settings', this.getSettings());
+  }
 
+  /** 设置变更副作用统一管线：需要即时生效或联动刷新的项集中在此，新增设置项勿再散落 if 链 */
+  _applySettingsEffects(patch, before) {
     if (patch.deviceName && patch.deviceName !== before.deviceName) {
       this.deviceName = patch.deviceName;
       if (this.chat) this.chat.setDeviceMember({ id: 'device-' + this.deviceId, name: this.deviceName, deviceId: this.deviceId });
@@ -746,10 +767,8 @@ class LanFileShare extends require('events').EventEmitter {
     }
     if (!!patch.https !== !!before.https) {
       // HTTPS 切换需重启服务生效
-      this.broadcast('settings', this.getSettings());
       this.emit('https-changed', !!patch.https);
     }
-    this.broadcast('settings', this.getSettings());
   }
 
   getShareQrcode(id) {
@@ -907,7 +926,18 @@ class LanFileShare extends require('events').EventEmitter {
     return { ok: true, mode: 'manual', file };
   }
 
-  /* ---------------- 信息 / 统计 ---------------- */
+  /* ---------------- 身份与心跳（单一字段来源：心跳 / selfInfo / mDNS 共用） ---------------- */
+
+  /** 设备类型：显式设置优先，否则按平台推断 */
+  _inferredDeviceType() {
+    return this.settings.deviceType || (this.osType === 'android' ? 'phone' : this.osType === 'darwin' ? 'laptop' : 'pc');
+  }
+
+  /** UPnP 映射出的外网 TCP 端口（无映射时为 null） */
+  _wanTcpPort() {
+    return (this.upnpInfo && (this.upnpInfo.mapped || []).find((m) => m.protocol === 'TCP') || {}).port || null;
+  }
+
   selfInfo() {
     return {
       deviceId: this.deviceId,
@@ -915,9 +945,9 @@ class LanFileShare extends require('events').EventEmitter {
       host: this.localIp,
       port: this.httpPort,
       os: this.osType,
-      deviceType: this.settings.deviceType || (this.osType === 'android' ? 'phone' : this.osType === 'darwin' ? 'laptop' : 'pc'),
+      deviceType: this._inferredDeviceType(),
       alias: String(this.settings.deviceAlias || '').trim().slice(0, 40),
-      wanPort: (this.upnpInfo && (this.upnpInfo.mapped || []).find((m) => m.protocol === 'TCP') || {}).port || null,
+      wanPort: this._wanTcpPort(),
       useHttps: !!this.useHttps,
       version: this.version,
       fingerprint: this.fingerprint,
@@ -970,7 +1000,7 @@ class LanFileShare extends require('events').EventEmitter {
     const list = this.deviceManager.list();
     return {
       shares: this.enabledShareCount(),
-      totalShares: this.shares.size,
+      totalShares: this.db.listShares().length,
       onlineDevices: list.filter((d) => d.is_online).length,
       devices: list.length,
       traffic: { up: this.traffic.up, down: this.traffic.down },
@@ -1025,7 +1055,6 @@ class LanFileShare extends require('events').EventEmitter {
   }
 
   _rootPageHtml() {
-    const isDefaultPw = !!(this.settings && this.settings.adminPasswordIsDefault);
     const shares = this.listShares()
       .map((s) => {
         const qs = s.password ? '?pwd=' : '';
@@ -1034,44 +1063,16 @@ class LanFileShare extends require('events').EventEmitter {
           <div class="path">${s.path}</div></div>`;
       })
       .join('');
-    return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-      <meta name="theme-color" content="#4f8cff"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icons/icon-192.png">
-      <link rel="stylesheet" href="/theme.css"><script src="/theme.js"></script>
-      <title>局域网文件共享</title><style>
-      *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
-      .wrap{max-width:760px;margin:0 auto;padding:32px 20px}h1{font-size:22px;margin:0 0 4px}.sub{color:var(--muted);font-size:14px;margin-bottom:24px}
-      .sub b{color:var(--text);letter-spacing:1px}
-      .entry{display:flex;gap:12px;margin-bottom:28px;flex-wrap:wrap}
-      .entry a{flex:1;min-width:200px;display:block;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;text-decoration:none;color:var(--text)}
-      .entry a:hover{border-color:var(--accent)}.entry b{display:block;font-size:15px;margin-bottom:4px;color:var(--accent)}
-      .entry span{font-size:13px;color:var(--muted)}
-      h3{font-size:15px;color:var(--muted);margin:0 0 12px;display:flex;align-items:center}
-      h3 a{margin-left:auto;font-size:13px;color:var(--accent);text-decoration:none}
-      .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin-bottom:10px}
-      .card-head{display:flex;align-items:center;gap:8px}.card-head a{color:var(--text);text-decoration:none;font-size:15px}
-      .dot{width:8px;height:8px;border-radius:50%}.dot.on{background:#36c275}.dot.off{background:#ff5d5d}
-      .perm{margin-left:auto;font-size:12px;color:var(--muted)}.path{font-size:12px;color:var(--muted);margin-top:6px;word-break:break-all}
-      .empty{color:var(--muted);font-size:14px}.empty a{color:var(--accent)}
-      .warnbox{background:rgba(255,179,64,.12);border:1px solid var(--yellow);color:var(--yellow);font-size:13px;padding:12px 16px;border-radius:10px;margin-bottom:24px;line-height:1.6}.warnbox b{color:var(--yellow)}
-      .g-nav{display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap}.g-nav a{display:inline-flex;align-items:center;gap:5px;padding:7px 13px;border-radius:9px;font-size:13px;color:var(--muted);text-decoration:none;border:1px solid var(--line);background:var(--panel);cursor:pointer}
-      .g-nav a:hover{border-color:var(--accent)}.g-nav a.active{background:var(--accent);color:#fff;border-color:var(--accent)}</style></head>
-      <body><div class="wrap"><h1>局域网文件共享平台</h1>
-      <div class="sub">本机地址：http://${this.localIp}:${this.httpPort}${this.fingerprint ? ' · 识别码 <b>' + ('LF-' + this.fingerprint.slice(0, 4) + '-' + this.fingerprint.slice(4, 8)).toUpperCase() + '</b>' : ''}</div>
-      <div class="g-nav">
-        <a href="/" class="active">🏠 门户</a>
-        <a href="/chat">💬 会话</a>
-        <a href="/admin">🛠 管理台</a>
-        <a id="themeBtn" title="切换主题">🌓 <span id="themeLbl">主题</span></a>
-      </div>
-      <script>(function(){var b=document.getElementById('themeBtn');if(!window.LfsTheme)return;function sync(){document.getElementById('themeLbl').textContent=window.LfsTheme.label();b.title='主题：'+window.LfsTheme.label()+'（点击切换）';}sync();b.onclick=function(){window.LfsTheme.cycle();sync();};})();</script>
-      <div class="entry">
-        <a href="/chat"><b>💬 统一会话</b><span>所有设备同框聊天 · 传文件 · 音视频通话</span></a>
-        <a href="/admin"><b>🛠 管理控制台</b><span>共享 / 设备 / 日志 / 设置（本机免登录）</span></a>
-      </div>
-      ${isDefaultPw ? '<div class="warnbox">⚠️ 管理后台当前使用默认密码 <b>admin</b>。远程（如飞牛 OS）登录时请输入该密码，登录后请尽快在「🛠 管理台 → ⚙ 设置 → 修改管理密码」中更改。</div>' : ''}
-      <h3>共享文件夹 <a href="/admin">＋ 去管理台添加</a></h3>
-      ${shares || '<div class="empty">暂无共享 — <a href="/admin">打开管理控制台</a>，点「添加共享」并浏览选择 NAS 目录</div>'}
-      </div><script>if('serviceWorker' in navigator && window.isSecureContext){navigator.serviceWorker.register('/sw.js').catch(function(){});}</script></body></html>`;
+    const isDefaultPw = !!(this.settings && this.settings.adminPasswordIsDefault);
+    const warn = isDefaultPw
+      ? '<div class="warnbox">⚠️ 管理后台当前使用默认密码 <b>admin</b>。远程（如飞牛 OS）登录时请输入该密码，登录后请尽快在「🛠 管理台 → ⚙ 设置 → 修改管理密码」中更改。</div>'
+      : '';
+    const selfAddr = `本机地址：http://${this.localIp}:${this.httpPort}${this.fingerprint ? ' · 识别码 <b>' + ('LF-' + this.fingerprint.slice(0, 4) + '-' + this.fingerprint.slice(4, 8)).toUpperCase() + '</b>' : ''}`;
+    const emptyShares = '<div class="empty">暂无共享 — <a href="/admin">打开管理控制台</a>，点「添加共享」并浏览选择 NAS 目录</div>';
+    return (this._portalHtml || '<h1>局域网文件共享</h1>')
+      .replace(/__SELF_ADDR__/g, selfAddr)
+      .replace(/__DEFAULT_PW_WARN__/g, warn)
+      .replace(/__SHARES__/g, shares || emptyShares);
   }
 
   async stop() {

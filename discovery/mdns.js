@@ -15,7 +15,7 @@ class MdnsDiscovery extends EventEmitter {
     this.browser = null;
   }
 
-  publish({ name, port, deviceId, os, version, sharedCount, fingerprint }) {
+  publish({ name, port, deviceId, os, version, sharedCount, fingerprint, deviceType, alias }) {
     this._fp = fingerprint || '';
     if (this.publisher) {
       try { this.publisher.stop(); } catch (e) {}
@@ -28,6 +28,8 @@ class MdnsDiscovery extends EventEmitter {
         protocol: PROTOCOL,
         deviceId,
         os: os || 'Unknown',
+        deviceType: deviceType || '',
+        alias: alias || '',
         version: version || '1.0.0',
         fingerprint: this._fp || '',
         sharedCount: String(sharedCount || 0),
@@ -50,6 +52,8 @@ class MdnsDiscovery extends EventEmitter {
         host: svc.host,
         port: svc.port,
         os: txt.os,
+        deviceType: txt.deviceType || '',
+        alias: txt.alias || '',
         version: txt.version,
         fingerprint: txt.fingerprint || '',
         sharedCount: parseInt(txt.sharedCount || '0', 10),

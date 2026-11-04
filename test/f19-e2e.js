@@ -36,7 +36,7 @@ const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
   ok('网关已启动', !!ls);
   const proto = ls.protocol; // 沙箱内 openssl 可能缺失 → http 或 https 都允许
   const lsBase = `${proto}://127.0.0.1:${ls.port}`;
-  ok('端口为 53317', ls.port === 53317);
+  ok('端口为 53317（同机多实例时自动让位递增）', ls.port >= 53317 && ls.port <= 53323);
   ok('指纹已生成', !!ls.fingerprint);
 
   // 用 node http/https 访问（https 自签需放宽校验）
