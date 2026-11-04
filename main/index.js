@@ -193,6 +193,7 @@ function registerIpc() {
   h('engine:trustDevice', (id, trusted) => engine.trustDevice(id, !!trusted));
   h('engine:blacklistDevice', (id, black) => engine.blacklistDevice(id, !!black));
   h('engine:starDevice', (id, starred) => engine.starDevice(id, !!starred));
+  h('engine:setDeviceAlias', (id, alias) => engine.setDeviceAlias(id, String(alias || '')));
   h('engine:pingDevice', (id) => engine.pingDevice(id));
   h('engine:remoteSharesSnapshot', () => (engine.bridge ? engine.bridge.remoteShareList() : []));
   h('engine:refreshRemoteShares', () => ({ requested: engine.bridge ? engine.bridge.requestSharesAll() : 0 }));
@@ -517,6 +518,28 @@ async function boot() {
 
   // 引擎设置变化时同步自启动
   engine.on && engine.on('settings', () => applyAutostart());
+
+  // v1.21.0 桌面聊天系统通知：远端消息到达且气泡窗口未开时弹系统通知（窗口开着时由页面内通知负责，避免重复）
+  const chatNotifSeen = new Set(); // 消息 id 去重
+  engine.on('chat.msg', (rec) => {
+    try {
+      if (!rec || chatNotifSeen.has(rec.id)) return;
+      chatNotifSeen.add(rec.id);
+      if (chatNotifSeen.size > 200) chatNotifSeen.delete(chatNotifSeen.values().next().value);
+      if (chatWindow && !chatWindow.isDestroyed()) return; // 气泡窗口在：页面内已有通知
+      let body = '';
+      if (rec.kind === 'file') {
+        try { body = '[文件] ' + JSON.parse(rec.file_meta || '[]').map((f) => f.name).join('、'); } catch (e) { body = '[文件]'; }
+      } else {
+        body = String(rec.text || '').slice(0, 100);
+      }
+      if (rec.to) body = '【私信】' + body;
+      if (Notification.isSupported()) {
+        const n = new Notification({ title: `💬 ${rec.sender_name || '局域网会话'}`, body });
+        n.on('click', () => openChatWindow());
+      }
+    } catch (e) {}
+  });
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('engine:ready', engine._snapshot());

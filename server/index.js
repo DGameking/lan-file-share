@@ -166,6 +166,7 @@ class LanFileShare extends require('events').EventEmitter {
         upnp: true,
         localsend: true,
         localsendPort: 53317,
+        offerPin: '',
         https: false,
         serverMode: false,
         autoUpdateCheck: true,
@@ -684,6 +685,14 @@ class LanFileShare extends require('events').EventEmitter {
   starDevice(id, starred) {
     const ok = this.deviceManager.setStarred(id, starred);
     if (ok) this.db.setDeviceStarred(id, starred);
+    this.broadcast('devices', this.deviceManager.list());
+    return ok;
+  }
+
+  /** 设置设备别名（v1.21.0 右键菜单；空串恢复原名，持久化到 devices.alias） */
+  setDeviceAlias(id, alias) {
+    const ok = this.deviceManager.setAlias(id, alias);
+    if (ok) this.db.setDeviceAlias(id, alias);
     this.broadcast('devices', this.deviceManager.list());
     return ok;
   }

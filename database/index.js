@@ -52,6 +52,9 @@ class DB {
       if (!cols('devices').includes('starred')) {
         this.db.run('ALTER TABLE devices ADD COLUMN starred INTEGER DEFAULT 0');
       }
+      if (!cols('devices').includes('alias')) {
+        this.db.run('ALTER TABLE devices ADD COLUMN alias TEXT');
+      }
     } catch (e) {}
   }
 
@@ -167,6 +170,9 @@ class DB {
   }
   setDeviceStarred(id, starred) {
     this._run('UPDATE devices SET starred=@s WHERE device_id=@id', { id, s: starred ? 1 : 0 });
+  }
+  setDeviceAlias(id, alias) {
+    this._run('UPDATE devices SET alias=@a WHERE device_id=@id', { id, a: String(alias || '').slice(0, 40) });
   }
   setBlacklist(id, black) {
     this._run('UPDATE devices SET is_blacklisted=@b WHERE device_id=@id', { id, b: black ? 1 : 0 });

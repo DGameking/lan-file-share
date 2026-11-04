@@ -387,6 +387,27 @@
         const r = await api.invoke('engine:starDevice', d.device_id, !d.starred);
         if (r.ok) { d.starred = !d.starred ? 1 : 0; toast(d.starred ? '已收藏，将置顶显示' : '已取消收藏', 'ok'); }
       }
+
+      // ---- v1.21.0 设备卡右键菜单 ----
+      const ctx = ref(null); // { x, y, d }
+      const aliasEdit = ref(null); // { id, value }
+      function openCtx(d, e) { ctx.value = { x: e.clientX, y: e.clientY, d }; }
+      function closeCtx() { ctx.value = null; }
+      async function ctxStar(d) { await star(d); }
+      function ctxAlias(d) { aliasEdit.value = { id: d.device_id, value: d.alias || '' }; }
+      async function aliasSave() {
+        const a = aliasEdit.value; if (!a) return;
+        const v = String(a.value || '').trim();
+        const r = await api.invoke('engine:setDeviceAlias', a.id, v);
+        if (r.ok) {
+          const d = store.devices.find((x) => x.device_id === a.id);
+          if (d) d.alias = v;
+          toast(v ? '别名已保存' : '已恢复设备原名', 'ok');
+        } else toast('保存失败: ' + r.error, 'warn');
+        aliasEdit.value = null;
+      }
+      function ctxGoDrop() { closeCtx(); window.dispatchEvent(new CustomEvent('lfs-nav', { detail: 'drop' })); }
+      function ctxCopyAddr(d) { copy(d.host + ':' + d.port); toast('地址已复制：' + d.host + ':' + d.port, 'ok'); }
       async function connect() {
         if (!host.value) return toast('请输入主机地址', 'warn');
         const r = await api.invoke('engine:connectManual', { host: host.value, port: port.value ? Number(port.value) : undefined });
@@ -409,8 +430,16 @@
         if (s) { copy(s); toast('识别码已复制，对方可通过它确认本机身份', 'ok'); }
       }
 
+      // 右键菜单点击他处/ESC 关闭
+      onMounted(() => {
+        document.addEventListener('click', closeCtx);
+        document.addEventListener('contextmenu', (e) => { if (!e.target.closest('.dev-card')) closeCtx(); });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeCtx(); aliasEdit.value = null; } });
+      });
+
       return { store, host, port, inviteCode, myInvite, ping, trust, blacklist, star, connect, discover, createInvite, joinInvite, copy,
-               fpFmt, sortedDevices, onlineCount, copyFp, typeIcon };
+               fpFmt, sortedDevices, onlineCount, copyFp, typeIcon,
+               ctx, aliasEdit, openCtx, closeCtx, ctxStar, ctxAlias, aliasSave, ctxGoDrop, ctxCopyAddr };
     },
     template: `
       <div>
@@ -465,7 +494,8 @@
           <h3>局域网设备（<span style="color:var(--green)">{{ onlineCount }}</span> 在线 / 共 {{ store.devices.length }} 台）</h3>
           <div v-if="store.devices.length === 0" class="empty">还没有发现设备 — 同一局域网内的设备会自动出现，也可以用上方邀请码或 IP 添加</div>
           <div v-else class="device-grid">
-            <div class="dev-card" v-for="d in sortedDevices" :key="d.device_id" :class="{ off: !d.is_online }">
+            <div class="dev-card" v-for="d in sortedDevices" :key="d.device_id" :class="{ off: !d.is_online }"
+                 @contextmenu.prevent="openCtx(d, $event)">
               <div class="dc-head">
                 <div class="dc-avatar" :style="d.is_online ? '' : 'filter:grayscale(1);opacity:.45'">{{ (d.alias || d.device_name || '?').slice(0,1).toUpperCase() }}</div>
                 <div class="dc-info">
@@ -488,6 +518,36 @@
                 <button class="btn sm danger" v-if="!d.is_blacklisted" @click="blacklist(d.device_id, true)">拉黑</button>
                 <button class="btn sm ghost" v-if="d.is_blacklisted" @click="blacklist(d.device_id, false)">解除</button>
               </div>
+            </div>
+          </div>
+          <div class="muted" style="margin-top:8px">💡 右键点击设备卡片可打开快捷菜单（收藏 / 别名 / 复制地址 / 信任 / 拉黑 / 去投送）</div>
+        </div>
+
+        <!-- v1.21.0 设备卡右键菜单 -->
+        <div v-if="ctx" class="ctx-menu" :style="{ left: ctx.x + 'px', top: ctx.y + 'px' }" @click.stop>
+          <div class="ctx-title">{{ ctx.d.alias || ctx.d.device_name }}</div>
+          <button class="ctx-item" @click="ctxStar(ctx.d); closeCtx()">{{ ctx.d.starred ? '☆ 取消收藏' : '★ 收藏置顶' }}</button>
+          <button class="ctx-item" @click="ctxAlias(ctx.d); closeCtx()">✏️ 设置别名…</button>
+          <button class="ctx-item" @click="ping(ctx.d.device_id); closeCtx()">📡 Ping 测延迟</button>
+          <button class="ctx-item" @click="ctxCopyAddr(ctx.d); closeCtx()">📋 复制 IP:端口</button>
+          <button class="ctx-item" @click="ctxGoDrop()">🚀 去投送</button>
+          <div class="ctx-sep"></div>
+          <button class="ctx-item" v-if="!ctx.d.is_trusted" @click="trust(ctx.d.device_id, true); closeCtx()">🤝 信任此设备</button>
+          <button class="ctx-item" v-else @click="trust(ctx.d.device_id, false); closeCtx()">🔓 取消信任</button>
+          <button class="ctx-item danger" v-if="!ctx.d.is_blacklisted" @click="blacklist(ctx.d.device_id, true); closeCtx()">🚫 拉黑此设备</button>
+          <button class="ctx-item" v-else @click="blacklist(ctx.d.device_id, false); closeCtx()">✅ 解除拉黑</button>
+        </div>
+
+        <!-- v1.21.0 别名编辑弹窗 -->
+        <div v-if="aliasEdit" class="modal-mask" @click.self="aliasEdit = null">
+          <div class="modal" style="width:360px">
+            <h3 style="margin-top:0">✏️ 设置设备别名</h3>
+            <div class="muted" style="margin-bottom:10px">仅本机显示的友好名称，留空恢复设备原名</div>
+            <input type="text" v-model="aliasEdit.value" style="width:100%" maxlength="40"
+                   placeholder="例：客厅电视 / 老爸手机" @keydown.enter="aliasSave" />
+            <div class="row" style="justify-content:flex-end;margin-top:14px;gap:8px">
+              <button class="btn ghost" @click="aliasEdit = null">取消</button>
+              <button class="btn" @click="aliasSave">保存</button>
             </div>
           </div>
         </div>
@@ -664,6 +724,7 @@
             <label class="field">投送 PIN（对方投送给本机时需提供；本机投送给对方时自动携带）<input type="text" :value="store.settings.dropPin" @change="onText($event,'dropPin')" style="width:160px" placeholder="留空不启用" /></label>
             <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.upnp !== false" @change="onCheck($event,'upnp')" /> UPnP 自动端口映射（路由器支持时跨网段可直连满速传输；失败自动走会合点中继）</label>
             <label class="row" style="gap:6px"><input type="checkbox" :checked="store.settings.localsend !== false" @change="onCheck($event,'localsend')" /> LocalSend 互通（与 LocalSend 官方客户端互相发现、互传文件；切换后重启生效）</label>
+            <label class="field">LocalSend 拉取 PIN（生成拉取链接时自动附加，对方下载前需提供；留空则链接持有人即可下载）<input type="text" :value="store.settings.offerPin" @change="onText($event,'offerPin')" style="width:160px" placeholder="例：826419" /></label>
             <label class="field">设备别名（对端看到的友好名称，留空用主机名）<input type="text" :value="store.settings.deviceAlias" @change="onText($event,'deviceAlias')" style="width:180px" placeholder="例：书房台式机" /></label>
             <label class="field">设备类型<select :value="store.settings.deviceType" @change="onText($event,'deviceType')" style="width:130px"><option value="">自动（按系统推断）</option><option value="pc">台式机</option><option value="laptop">笔记本</option><option value="phone">手机/平板</option><option value="nas">NAS/服务器</option></select></label>
             <label class="field">跨网段会合点（中心端 IP:端口，逗号分隔；填光猫层 NAS 地址即可打通双路由器不同网段）<input type="text" :value="store.settings.rendezvous" @change="onText($event,'rendezvous')" placeholder="例：192.168.10.5:8080" /></label>
@@ -1201,12 +1262,14 @@
       });
 
       // v1.20.0 LocalSend 拉取链接：选文件生成 URL，LS 设备/浏览器可下载
+      // v1.21.0 自动附加设置里的拉取 PIN（offerPin），无 PIN 的链接持有人即可下载
       async function createLsOffer() {
-        const r = await api.invoke('localsend:createOffer', {});
+        const pin = String((store.settings && store.settings.offerPin) || '').trim();
+        const r = await api.invoke('localsend:createOffer', { pin });
         if (!r.ok) { toast('生成失败：' + (r.error === 'no_valid_files' ? '没有可用文件' : r.error), 'warn'); return; }
         if (!r.data) return; // 用户取消
         try { await navigator.clipboard.writeText(r.data.url); } catch (e) {}
-        toast(`拉取链接已复制（${Object.keys(r.data.files).length} 个文件，10 分钟内有效）：${r.data.url}`, 'ok');
+        toast(`拉取链接已复制（${Object.keys(r.data.files).length} 个文件，10 分钟内有效${pin ? '，需 PIN ' + pin : '，⚠️ 未设 PIN 任何持链接者可下载'}）：${r.data.url}`, 'ok');
       }
 
       return { store, onlineDevices, dragDevice, dragAny, transfers, received, clipText, onDropDevice, onDragOver, onDragLeave, sendClip, openReceived, clearReceivedHistory, openRecvFile, saveRecvAs, delRecvFile, createLsOffer };
@@ -1310,6 +1373,8 @@
         // 兜底轮询：事件推送之外，每 5 秒对齐一次全量快照，保证信息始终统一
         setInterval(() => refresh().catch(() => {}), 5000);
         api.on('nav', (t) => { if (t) tab.value = t; }); // 托盘/全局快捷键跳转
+        // v1.21.0 设备卡右键菜单「去投送」等页内跳转（组件间解耦走 window 事件）
+        window.addEventListener('lfs-nav', (e) => { if (e.detail) setTab(e.detail); });
         // v1.18.0 通知中心：设备上下线（按在线状态变化去重）
         let prevOnline = null; // Map<deviceId, bool>
         api.on('devices', (list) => {

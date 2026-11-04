@@ -464,6 +464,10 @@ class ChatManager {
         }
         rec.file_meta = rec.files ? JSON.stringify(rec.files) : rec.file_meta || null;
         this._persist(rec);
+        // v1.21.0 桌面系统通知：远端消息上报引擎（主进程在气泡窗口未开时弹系统通知）
+        if (this.ctx && typeof this.ctx.emit === 'function') {
+          try { this.ctx.emit('chat.msg', rec); } catch (e) {}
+        }
         if (rec.to) {
           // v1.18.0 私聊（跨设备）：远端发来的定向消息只在本机投给目标成员；
           // 目标不在线时仅落库（目标上线后可从历史加载）

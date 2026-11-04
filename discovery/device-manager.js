@@ -91,6 +91,15 @@ class DeviceManager extends EventEmitter {
     return true;
   }
 
+  /** 设置设备别名（v1.21.0 右键菜单；空串恢复原名） */
+  setAlias(id, alias) {
+    const d = this.devices.get(id);
+    if (!d) return false;
+    d.alias = String(alias || '').trim().slice(0, 40);
+    this.emit('update', this.list());
+    return true;
+  }
+
   get(id) {
     return this.devices.get(id);
   }
@@ -121,6 +130,7 @@ class DeviceManager extends EventEmitter {
         is_trusted: r.is_trusted,
         is_blacklisted: r.is_blacklisted,
         starred: r.starred ? 1 : 0,
+        alias: r.alias || '',
         is_online: false,
         last_seen: r.last_seen,
       });

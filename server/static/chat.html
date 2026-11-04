@@ -637,7 +637,11 @@ function notify(r){
     if(r.to) body='【私信】'+body; // v1.18.0 私聊提醒
     if(r.kind==='text' && myName && String(r.text||'').indexOf('@'+myName)>=0) body='【有人@我】'+body; // v1.17.0 @我提醒
     var n = new Notification(r.sender_name, { body: body, tag:r.id });
-    n.onclick = function(){ window.focus(); resetUnread(); };
+    n.onclick = function(){
+      // v1.21.0 桌面气泡窗口：点击通知聚焦独立窗口（Web 端无 lan API，回退 window.focus）
+      if(window.lan && window.lan.openChat) window.lan.openChat(); else window.focus();
+      resetUnread();
+    };
   }catch(e){}
 }
 

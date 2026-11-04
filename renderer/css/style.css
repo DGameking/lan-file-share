@@ -219,6 +219,21 @@ th { color: var(--text-dim); font-weight: 500; }
 .qr { text-align: center; margin: 12px 0; }
 .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
 
+/* ---------------- v1.21.0 设备卡右键菜单 ---------------- */
+.ctx-menu {
+  position: fixed; z-index: 60; min-width: 180px;
+  background: var(--bg-soft); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.22); padding: 6px; display: flex; flex-direction: column;
+}
+.ctx-title { font-size: 12px; font-weight: 600; color: var(--text-dim); padding: 6px 10px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
+.ctx-item {
+  text-align: left; border: 0; background: transparent; color: var(--text);
+  font-size: 13px; padding: 7px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+}
+.ctx-item:hover { background: var(--hover); }
+.ctx-item.danger { color: #dc2626; }
+.ctx-sep { height: 1px; background: var(--border); margin: 4px 6px; }
+
 /* ---------------- v1.5 UI 细化 ---------------- */
 
 /* 自定义滚动条 */
