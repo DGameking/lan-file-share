@@ -56,6 +56,7 @@ const OS_MAP = { win32: 'Windows', darwin: 'macOS', linux: 'Linux' };
 class LanFileShare extends require('events').EventEmitter {
   constructor(opts = {}) {
     super();
+    this._opts = opts;
     this.httpPort = opts.httpPort || DEFAULT_HTTP_PORT;
     this.dataDir = opts.dataDir || path.join(__dirname, '..', 'data');
     this.dbPath = opts.dbPath || path.join(this.dataDir, 'app.db');
@@ -155,8 +156,7 @@ class LanFileShare extends require('events').EventEmitter {
         onlyTrustedVisible: false,
         firstConnectConfirm: true,
         autoTrust: false,
-        startup: false,
-        minimizeToTray: true,
+        startup: false,        minimizeToTray: true,
         speedLimitUpload: 0,
         speedLimitDownload: 0,
         defaultPermission: 'read',
@@ -172,6 +172,10 @@ class LanFileShare extends require('events').EventEmitter {
         serverMode: false,
         autoUpdateCheck: true,
       };
+    // v1.22.3：构造参数可覆盖设置（测试隔离用，如 udp:false / mdns:false）
+    if (this._opts.settings && typeof this._opts.settings === 'object') {
+      this.settings = { ...this.settings, ...this._opts.settings };
+    }
     this.deviceName = this.settings.deviceName || this.deviceName;
     // HTTPS 模式由设置控制（自签证书，重启生效）；屏幕共享 / PWA 需要安全上下文
     this.useHttps = !!this.settings.https;

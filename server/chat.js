@@ -436,14 +436,15 @@ class ChatManager {
     return [...this._localMembers(), ...(this.ctx.bridge ? this.ctx.bridge.remoteMemberList() : [])];
   }
 
-  _broadcastMembers() {
+  _broadcastMembers(relay = true) {
     this._broadcast('chat.members', this._combinedMembers(), { bridge: false });
-    if (this.ctx.bridge) this.ctx.bridge.relay('chat.members', this._localMembers());
+    if (relay && this.ctx.bridge) this.ctx.bridge.relay('chat.members', this._localMembers());
   }
 
-  /** 桥接层远端成员/目录变化后调用：向本机客户端重发合并后的成员列表 */
-  refreshMembers() {
-    this._broadcastMembers();
+  /** 桥接层远端成员/目录变化后调用：向本机客户端重发合并后的成员列表
+   *  relay=false 时只在本机广播（远端成员表更新路径专用，防止中继回声风暴） */
+  refreshMembers(relay = true) {
+    this._broadcastMembers(relay);
   }
 
   /** 桥接层收到对端事件后调用：只在本机内分发 */

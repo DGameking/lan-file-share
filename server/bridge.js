@@ -28,6 +28,26 @@ class BridgeManager {
     this.peerInfo = new Map();
     this._retry = new Map();
     this._destroyed = false;
+
+    // v1.22.3 自愈对账：成员/共享目录此前只在握手与变更时同步一次，
+    // 任何一次帧丢失都会让该端对远端成员永久失明（实际案例：某端重启后
+    // 长期只看到本机、其他端却都能看到它）。周期重播本机表，全网格最终收敛。
+    this._resyncTimer = setInterval(() => this._resyncOnce(), 45000);
+    if (this._resyncTimer.unref) this._resyncTimer.unref();
+  }
+
+  /** 周期对账一次：向所有对端重播本机成员表与共享目录（丢帧自愈） */
+  _resyncOnce() {
+    if (this._destroyed) return;
+    if (!this.outbound.size && !this.inbound.size) return;
+    try {
+      if (this.engine.chat) {
+        this.relay('chat.members', this.engine.chat._localMembers());
+      }
+      if (this.engine.shareCatalog) {
+        this.relay('shares.catalog', this.engine.shareCatalog());
+      }
+    } catch (e) {}
   }
 
   /* ---------------- 生命周期 ---------------- */
@@ -57,6 +77,7 @@ class BridgeManager {
 
   stop() {
     this._destroyed = true;
+    if (this._resyncTimer) clearInterval(this._resyncTimer);
     for (const t of this._retry.values()) clearTimeout(t);
     this._retry.clear();
     for (const ws of this.outbound.values()) { try { ws.close(); } catch (e) {} }
@@ -120,6 +141,14 @@ class BridgeManager {
       if (this.outbound.get(id) === ws) this.outbound.delete(id);
       if (this.engine.logger) this.engine.logger.info('bridge', `桥接断开（本端发起）`, { peer: id, host: d.host });
       if (process.env.LFS_BRIDGE_DEBUG) console.error(`[bridge-dbg] outbound close peer=${id}`);
+      // v1.22.3：清掉该对端的远端成员/目录缓存，防止幽灵成员残留；重连握手 + 周期对账会重新填充
+      let changed = false;
+      if (this.remoteMembers.delete(id)) changed = true;
+      if (this.remoteShares.delete(id)) changed = true;
+      if (changed) {
+        this._refreshLocalMembers();
+        this._pushRemoteShares();
+      }
       if (!this._destroyed) this._scheduleConnect(d, 8000);
     });
     ws.on('error', () => { /* close 会跟随触发 */ });
@@ -127,14 +156,13 @@ class BridgeManager {
 
   _onData(ws, raw) {
     let msg;
-    if (typeof raw === 'string') {
-      try {
-        msg = JSON.parse(raw);
-      } catch (e) {
-        return;
-      }
-    } else {
-      msg = raw;
+    try {
+      // v1.22.3 关键修复：ws 客户端 socket 的 'message' 事件给的是 Buffer（文本帧也是），
+      // 此前只解析 string，导致发起方（deviceId 较小、主动建连的一端）对接受方的
+      // 所有帧（成员表/消息/共享目录）全部静默丢弃 —— 发起方永久"半聋"。
+      msg = typeof raw === 'string' ? JSON.parse(raw) : JSON.parse(raw.toString());
+    } catch (e) {
+      return;
     }
     if (!msg || typeof msg.type !== 'string') return false;
 
@@ -155,8 +183,12 @@ class BridgeManager {
       if (sockIp && !/^127\./.test(sockIp)) info.host = sockIp;
 
       if (ws._bridgeDir === 'out' || this.outbound.has(info.deviceId)) {
-        // 是我方主动连接的对端在回应 —— 只记录地址信息，不重复登记
+        // 是我方主动连接的对端在回应 —— 记录地址信息；
+        // v1.22.3：同时回送本机成员与目录（对端重连/重复 hello 时也完成一次同步，自愈）
         this.peerInfo.set(info.deviceId, { host: info.host, port: info.port });
+        if (this.engine.chat) this.engine.chat.relayMembersTo(ws);
+        this.relaySharesTo(ws);
+        this._send(ws, { type: 'shares.request' });
         return true;
       }
       // 对端主动连入
@@ -203,6 +235,10 @@ class BridgeManager {
       if (this.engine.chat && ['chat.msg', 'chat.members', 'chat.typing', 'chat.recall', 'clip.sync'].includes(event)) {
         this.engine.chat.deliverRemote(event, msg.payload, origin);
         return true;
+      }
+      if (!this.engine.chat && event === 'chat.members') {
+        // v1.22.3：不再静默丢弃——会话模块未就绪时收到成员表意味着初始化顺序有竞态，留痕排查
+        if (this.engine.logger) this.engine.logger.warn('bridge', '会话模块未就绪，丢弃对端成员表（应由周期对账自动补齐）', { peer: origin.slice(0, 13) });
       }
       return true;
     }
@@ -256,7 +292,10 @@ class BridgeManager {
       }
     }
     this.remoteMembers.set(origin, [...buckets.values(), ...loose]);
-    this._refreshLocalMembers();
+    // v1.22.3：只更新本机与广播本机客户端，绝不回中继——
+    // 否则 A 收到 B 的成员表后回播给 B，B 再回播给 A，无限乒乓打满事件循环（回声风暴）。
+    // 全网格每个端各自直发本地成员表（变更广播 + 周期对账），转发本就多余。
+    this._refreshLocalMembers(false);
   }
 
   remoteMemberList() {
@@ -310,8 +349,8 @@ class BridgeManager {
     return this.peerInfo.get(deviceId) || null;
   }
 
-  _refreshLocalMembers() {
-    if (this.engine.chat) this.engine.chat.refreshMembers();
+  _refreshLocalMembers(relay = true) {
+    if (this.engine.chat) this.engine.chat.refreshMembers(relay);
   }
 }
 
