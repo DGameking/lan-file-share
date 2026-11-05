@@ -51,6 +51,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif
 .g-topnav a{display:inline-flex;align-items:center;gap:5px;text-decoration:none;color:var(--muted);font-size:13px;padding:6px 12px;border-radius:8px;border:1px solid transparent;transition:background .12s,color .12s}
 .g-topnav a:hover{background:var(--accent-soft);color:var(--accent)}
 .g-topnav a.active{background:var(--accent);color:#fff}
+body.embed .g-topnav{display:none}
 .body-row{flex:1;display:flex;min-height:0}
 .m-nav{display:none}
 .btn{border:none;border-radius:10px;padding:8px 14px;font-size:13px;cursor:pointer;background:var(--accent);color:#fff}
@@ -311,6 +312,7 @@ var msgsEl=$('msgs'), inputEl=$('input'), membersEl=$('members');
    且名称跟随 URL 参数（设备改名后自动同步），与浏览器打开的会话页互不覆盖 */
 var qs = new URLSearchParams(location.search);
 var isDesktop = qs.get('kind') === 'desktop';
+if (isDesktop) document.body.classList.add('embed'); // 嵌入模式：隐藏门户级导航，避免与桌面端侧边栏双重导航
 var idKey = isDesktop ? 'chat_id_desktop' : 'chat_id';
 var nameKey = isDesktop ? 'chat_name_desktop' : 'chat_name';
 var urlName = (qs.get('name') || '').trim();
